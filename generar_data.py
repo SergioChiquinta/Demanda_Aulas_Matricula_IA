@@ -28,7 +28,7 @@ data = {
     "cursos_comun": np.random.randint(0, 2, rows),
     "duracion_semanas": np.random.randint(8, 16, rows),
     "laboratorio": np.random.randint(0, 2, rows),
-    "tiempo_matricula_min": np.random.randint(5, 60, rows),
+    "tiempo_matricula_min": np.random.randint(135, 270, rows),
 }
 
 df = pd.DataFrame(data)
