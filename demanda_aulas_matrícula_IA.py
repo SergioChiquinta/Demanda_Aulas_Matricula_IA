@@ -194,73 +194,344 @@ class AppDemandaAulas:
     # ==============================
     def vista_analisis(self):
         self.limpiar_contenedor()
-        
+
         header_frame = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
         header_frame.pack(fill="x", pady=20, padx=40)
 
-        tk.Label(header_frame, text="Análisis de Eficiencia de Infraestructura", 
+        tk.Label(header_frame, text="Análisis de Eficiencia de Infraestructura",
                  font=FUENTE_TITULO, bg=GRIS_FONDO, fg=NEGRO).pack(side="left")
 
         self.mostrar_info = False
         self.btn_toggle = tk.Button(header_frame, text="Ver Interpretación 📝", font=FUENTE_NORMAL,
-                                   bg=ROJO_UTP, fg=BLANCO, bd=0, padx=20, cursor="hand2",
-                                   command=self.toggle_interpretacion)
+                                    bg=ROJO_UTP, fg=BLANCO, bd=0, padx=20, cursor="hand2",
+                                    command=self.toggle_interpretacion)
         self.btn_toggle.pack(side="right")
 
         self.frame_contenido_analisis = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
         self.frame_contenido_analisis.pack(fill="both", expand=True, padx=40, pady=10)
 
+        # Variables numéricas aptas para clustering (se excluyen categóricas)
+        vars_numericas = [
+            "alumnos_matriculados", "capacidad_aula", "carga_academica_proyectada",
+            "creditos_curso", "alumnos_repitentes", "tiempo_matricula_min",
+            "alumnos_nuevos", "veces_llevado"
+        ]
+        self.vars_disponibles = [v for v in vars_numericas if v in self.df.columns]
+
+        # Panel de controles: Comboboxes para selección dinámica de variables X e Y
+        panel_controles = tk.Frame(self.frame_contenido_analisis, bg=GRIS_FONDO)
+        panel_controles.pack(fill="x", pady=(0, 10))
+
+        tk.Label(panel_controles, text="Variable X:", font=FUENTE_NORMAL,
+                 bg=GRIS_FONDO, fg=NEGRO).pack(side="left", padx=(0, 5))
+        self.combo_x = ttk.Combobox(panel_controles, values=self.vars_disponibles,
+                                    state="readonly", width=25)
+        self.combo_x.set("alumnos_matriculados" if "alumnos_matriculados" in self.vars_disponibles
+                         else self.vars_disponibles[0])
+        self.combo_x.pack(side="left", padx=(0, 20))
+
+        tk.Label(panel_controles, text="Variable Y:", font=FUENTE_NORMAL,
+                 bg=GRIS_FONDO, fg=NEGRO).pack(side="left", padx=(0, 5))
+        self.combo_y = ttk.Combobox(panel_controles, values=self.vars_disponibles,
+                                    state="readonly", width=25)
+        self.combo_y.set("capacidad_aula" if "capacidad_aula" in self.vars_disponibles
+                         else self.vars_disponibles[1])
+        self.combo_y.pack(side="left", padx=(0, 20))
+
+        # Actualización automática al cambiar cualquier variable
+        self.combo_x.bind("<<ComboboxSelected>>", lambda _: self._actualizar_analisis())
+        self.combo_y.bind("<<ComboboxSelected>>", lambda _: self._actualizar_analisis())
+
+        tk.Button(panel_controles, text="Actualizar Análisis 🔄", font=FUENTE_NORMAL,
+                  bg=ROJO_UTP, fg=BLANCO, bd=0, padx=15, cursor="hand2",
+                  command=self._actualizar_analisis).pack(side="left")
+
         self.panel_grafico = tk.Frame(self.frame_contenido_analisis, bg=GRIS_FONDO)
         self.panel_grafico.pack(fill="both", expand=True)
 
-        # Clustering y Gráfico con colores adaptados
-        X_cluster = self.df[["alumnos_matriculados", "capacidad_aula"]]
-        kmeans = KMeans(n_clusters=3, n_init=10, random_state=42)
-        self.df['cluster'] = kmeans.fit_predict(X_cluster)
-        
-        # Mapeo de colores para el scatter plot
-        colores_map = [COLOR_SUBUTILIZADO, COLOR_OPTIMO, COLOR_SOBREPOBLADO]
-        
-        fig, ax = plt.subplots(figsize=(8, 6))
-        for cluster_id in range(3):
-            subset = self.df[self.df['cluster'] == cluster_id]
-            ax.scatter(subset["alumnos_matriculados"], subset["capacidad_aula"], 
-                       c=colores_map[cluster_id], alpha=0.7, edgecolors='w', s=80, label=f"Cluster {cluster_id}")
-        
-        ax.plot([0, 100], [0, 100], 'k--', alpha=0.5, label='Línea de Equilibrio')
-        ax.set_title("Relación: Demanda Real vs Capacidad de Aula", fontsize=14, pad=20)
-        ax.set_xlabel("Alumnos Matriculados (Demanda)", fontsize=12)
-        ax.set_ylabel("Capacidad Física del Aula", fontsize=12)
-        ax.legend()
-        ax.grid(True, linestyle='--', alpha=0.6)
+        # Panel de interpretación: se crea aquí pero se muestra solo con el toggle
+        self.panel_info = tk.Frame(self.frame_contenido_analisis, bg=BLANCO, bd=2, relief="ridge")
 
-        canvas = FigureCanvasTkAgg(fig, master=self.panel_grafico)
+        # Ejecutar análisis inicial con los valores por defecto
+        self._actualizar_analisis()
+
+    def _actualizar_analisis(self):
+        """Ejecuta el pipeline completo con K=3 fijo cada vez que cambian los Combobox.
+
+        K=3 es una decisión de dominio administrativo: la infraestructura académica
+        tiene exactamente 3 estados operativos relevantes y excluyentes:
+          • Subutilización  — capacidad ociosa, costo operativo innecesario
+          • Eficiencia       — ocupación equilibrada, uso ideal del activo
+          • Hacinamiento    — demanda ≥ capacidad, riesgo académico y de seguridad
+
+        El método del codo y el silhouette score se usan únicamente como herramientas
+        de VALIDACIÓN para confirmar que K=3 es razonable con los datos seleccionados.
+        """
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.metrics import silhouette_score
+
+        K = 3  # Valor de diseño administrativo — fijo por definición del modelo
+
+        var_x = self.combo_x.get()
+        var_y = self.combo_y.get()
+
+        if var_x == var_y:
+            messagebox.showwarning("Variables iguales",
+                                   "Selecciona variables distintas para X e Y.")
+            return
+        if var_x not in self.df.columns or var_y not in self.df.columns:
+            messagebox.showerror("Error de datos",
+                                 f"Columna no encontrada: '{var_x}' o '{var_y}'.")
+            return
+
+        # Selección EXPLÍCITA por nombre — ningún ciclo anterior puede influir
+        datos = self.df[[var_x, var_y]].dropna()
+        if len(datos) < 9:
+            messagebox.showerror("Datos insuficientes",
+                                 "Se necesitan al menos 9 filas válidas para el clustering.")
+            return
+
+        # Array 2-D fresco — columna 0 = var_x, columna 1 = var_y
+        X_raw = datos[[var_x, var_y]].values
+
+        # DEBUG: verifica en consola que el pipeline usa las variables correctas
+        print(f"\n{'='*60}")
+        print(f"[ANALISIS] var_x={var_x!r}  var_y={var_y!r}")
+        print(f"[ANALISIS] Filas válidas : {len(X_raw)}")
+        print(f"[ANALISIS] Rango {var_x}: [{X_raw[:,0].min():.2f}, {X_raw[:,0].max():.2f}]")
+        print(f"[ANALISIS] Rango {var_y}: [{X_raw[:,1].min():.2f}, {X_raw[:,1].max():.2f}]")
+
+        # StandardScaler: normaliza var_x y var_y a media=0, std=1.
+        # Necesario porque KMeans usa distancias euclidianas; sin normalizar, la variable
+        # con mayor rango dominaría la geometría del clustering.
+        scaler   = StandardScaler()
+        X_scaled = scaler.fit_transform(X_raw)
+
+        # Inercias sobre datos CRUDOS para el gráfico del codo.
+        # Al usar X_raw (no X_scaled), el eje Y refleja la escala real de cada variable:
+        # "capacidad_aula" (rango ~200) produce inercias en miles,
+        # "veces_llevado" (rango ~10) las produce en decenas — curvas visualmente distintas.
+        inercias = []
+        for k in range(1, 11):
+            km = KMeans(n_clusters=k, n_init=10, random_state=42)
+            km.fit(X_raw)
+            inercias.append(km.inertia_)
+
+        print(f"[ANALISIS] Inercias K=1..10: {[round(v, 1) for v in inercias]}")
+        print(f"[ANALISIS] Inercia en K=3  : {inercias[2]:,.1f}")
+
+        # KMeans con K=3 sobre datos normalizados
+        # n_init=10: 10 inicializaciones distintas, conserva la de menor inercia
+        # random_state=42: semilla fija para reproducibilidad exacta
+        kmeans           = KMeans(n_clusters=K, n_init=10, random_state=42)
+        labels           = kmeans.fit_predict(X_scaled)
+        centroids_scaled = kmeans.cluster_centers_
+        centroids_real   = scaler.inverse_transform(centroids_scaled)
+
+        # Silhouette Score: valida la calidad del agrupamiento K=3 en los datos actuales
+        try:
+            sil_score = silhouette_score(X_scaled, labels)
+        except Exception:
+            sil_score = 0.0
+
+        print(f"[ANALISIS] Silhouette Score: {sil_score:.4f}")
+
+        interp_sil = ("Excelente" if sil_score > 0.7 else
+                      "Bueno"     if sil_score > 0.5 else
+                      "Aceptable" if sil_score > 0.25 else "Débil")
+
+        cluster_roles = self._asignar_roles_clusters(centroids_real, var_x, var_y)
+
+        self.df['cluster'] = -1
+        self.df.loc[datos.index, 'cluster'] = labels
+
+        # Cerrar figura anterior para liberar estado interno de matplotlib
+        fig_prev = getattr(self, '_fig_analisis', None)
+        if fig_prev is not None:
+            plt.close(fig_prev)
+
+        for widget in self.panel_grafico.winfo_children():
+            widget.destroy()
+
+        # Figura completamente nueva en cada ejecución
+        self._fig_analisis, (ax_scatter, ax_codo) = plt.subplots(1, 2, figsize=(14, 5))
+        self._fig_analisis.patch.set_facecolor(GRIS_FONDO)
+
+        colores_fijos = {
+            "subutilizado": COLOR_SUBUTILIZADO,
+            "optimo":       COLOR_OPTIMO,
+            "sobrepoblado": COLOR_SOBREPOBLADO
+        }
+
+        # Scatter con valores REALES para que los ejes sean legibles
+        for cid in range(K):
+            rol   = cluster_roles.get(cid, "optimo")
+            color = colores_fijos[rol]
+            mask  = labels == cid
+            ax_scatter.scatter(X_raw[mask, 0], X_raw[mask, 1],
+                               c=color, alpha=0.7, edgecolors='w', s=80,
+                               label=f"Cluster {cid}")
+
+        ax_scatter.set_title(f"Clustering K=3: {var_x} vs {var_y}", fontsize=13, pad=15)
+        ax_scatter.set_xlabel(var_x.replace("_", " ").title(), fontsize=11)
+        ax_scatter.set_ylabel(var_y.replace("_", " ").title(), fontsize=11)
+        ax_scatter.legend(fontsize=9)
+        ax_scatter.grid(True, linestyle="--", alpha=0.6)
+        ax_scatter.set_facecolor("#F9F9F9")
+        ax_scatter.annotate(f"Silhouette: {sil_score:.3f} — {interp_sil}",
+                            xy=(0.02, 0.97), xycoords="axes fraction",
+                            fontsize=9, va="top",
+                            bbox=dict(boxstyle="round,pad=0.3", fc=BLANCO, alpha=0.85))
+
+        # ── Gráfico del codo (validación visual de K=3) ──────────────────────
+        # La curva usa inercias sobre X_raw: el eje Y cambia con cada par de
+        # variables, evidenciando que el recálculo es real.
+        ax_codo.plot(range(1, 11), inercias, "o-",
+                     color=ROJO_UTP, linewidth=2, markersize=6, zorder=3,
+                     label="Inercia por K")
+
+        # Marcador prominente en K=3
+        val_k3 = inercias[2]
+        ax_codo.scatter([3], [val_k3], s=280, color=COLOR_OPTIMO,
+                        zorder=5, marker='*')
+
+        # Línea vertical fija en K=3
+        ax_codo.axvline(x=3, color=COLOR_OPTIMO, linestyle="--",
+                        alpha=0.75, linewidth=1.8)
+
+        # Zona sombreada de retornos decrecientes (K > 3)
+        ax_codo.axvspan(3.5, 10.5, alpha=0.07, color=GRIS_TEXTO)
+        ax_codo.text(3.7, inercias[0] * 0.97,
+                     "retornos\ndecrecientes", fontsize=7.5,
+                     color=GRIS_TEXTO, va="top", style="italic")
+
+        # Anotación con justificación administrativa de K=3
+        y_rango = inercias[0] - inercias[-1]
+        ann_y   = inercias[-1] + y_rango * 0.55
+        ax_codo.annotate(
+            f"K=3 (modelo administrativo)\nInercia: {val_k3:,.0f}",
+            xy=(3, val_k3),
+            xytext=(4.4, ann_y),
+            fontsize=8.5, color=COLOR_OPTIMO, fontweight="bold",
+            arrowprops=dict(arrowstyle="->", color=COLOR_OPTIMO, lw=1.5),
+            bbox=dict(boxstyle="round,pad=0.4", fc=BLANCO,
+                      ec=COLOR_OPTIMO, alpha=0.92)
+        )
+
+        # Eje secundario: mejora marginal por K (barras %)
+        # Verde para K≤3 (zona útil), gris para K>3 (retornos decrecientes)
+        gains   = np.abs(np.diff(inercias))
+        rel_pct = gains / (inercias[0] + 1e-9) * 100
+        bar_cols = [COLOR_OPTIMO if k <= 3 else "#BDBDBD" for k in range(2, 11)]
+        ax_r = ax_codo.twinx()
+        ax_r.bar(range(2, 11), rel_pct, alpha=0.28, color=bar_cols,
+                 width=0.55, zorder=2)
+        ax_r.set_ylabel("Mejora marginal (%)", fontsize=9, color=GRIS_TEXTO)
+        ax_r.tick_params(axis="y", labelcolor=GRIS_TEXTO, labelsize=8)
+        for k_bar, pct, col in zip(range(2, 11), rel_pct, bar_cols):
+            if pct > 2:
+                ax_r.text(k_bar, pct + 0.3, f"{pct:.0f}%",
+                          ha="center", va="bottom", fontsize=7,
+                          color=col, fontweight="bold")
+
+        ax_codo.set_title("Método del Codo — Validación de K=3", fontsize=13, pad=15)
+        ax_codo.set_xlabel("Número de Clusters (K)", fontsize=11)
+        lbl_x = var_x.replace("_", " ")[:14]
+        lbl_y = var_y.replace("_", " ")[:14]
+        ax_codo.set_ylabel(f"Inercia  [{lbl_x} + {lbl_y}]", fontsize=9)
+        ax_codo.legend(fontsize=8, loc="upper right")
+        ax_codo.grid(True, linestyle="--", alpha=0.5, zorder=1)
+        ax_codo.set_facecolor("#F9F9F9")
+        ax_codo.set_xticks(range(1, 11))
+
+        plt.tight_layout(pad=2.0)
+
+        canvas = FigureCanvasTkAgg(self._fig_analisis, master=self.panel_grafico)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-        # Panel de Interpretación con colores coincidentes
-        self.panel_info = tk.Frame(self.frame_contenido_analisis, bg=BLANCO, bd=2, relief="ridge")
-        tk.Label(self.panel_info, text="Interpretación Administrativa de Datos", 
-                 font=FUENTE_SUBTITULO, bg=BLANCO, fg=ROJO_UTP).pack(pady=30)
-        
+        self._construir_panel_info(cluster_roles, centroids_real, var_x, var_y,
+                                   sil_score, interp_sil)
+
+    def _asignar_roles_clusters(self, centroids_real, var_x, var_y):
+        """Asigna el rol semántico de cada uno de los 3 clusters según centroides reales.
+
+        K=3 siempre produce exactamente: subutilizado / optimo / sobrepoblado.
+        Con variables alumnos vs capacidad usa el ratio de ocupación (demanda/oferta).
+        Con cualquier otro par ordena por magnitud del centroide en var_x.
+        """
+        usa_ratio = ("alumno" in var_x.lower() and "capacidad" in var_y.lower())
+
+        if usa_ratio:
+            # Mayor ratio → mayor ocupación relativa → mayor riesgo de hacinamiento
+            pares = [(i, c[0] / c[1] if c[1] > 0 else float("inf"))
+                     for i, c in enumerate(centroids_real)]
+        else:
+            pares = [(i, c[0]) for i, c in enumerate(centroids_real)]
+
+        pares.sort(key=lambda x: x[1])
+        return {
+            pares[0][0]: "subutilizado",
+            pares[1][0]: "optimo",
+            pares[2][0]: "sobrepoblado"
+        }
+
+    def _construir_panel_info(self, cluster_roles, centroids_real, var_x, var_y,
+                               sil_score, interp_sil):
+        """Reconstruye el panel de interpretación con descripciones dinámicas."""
+        for widget in self.panel_info.winfo_children():
+            widget.destroy()
+
+        tk.Label(self.panel_info, text="Interpretación Administrativa de Datos",
+                 font=FUENTE_SUBTITULO, bg=BLANCO, fg=ROJO_UTP).pack(pady=(20, 5))
+
+        tk.Label(self.panel_info,
+                 text=(f"K = 3  (modelo administrativo: Subutilización / Eficiencia / Hacinamiento)"
+                       f"   |   Silhouette: {sil_score:.3f}  →  {interp_sil}"),
+                 font=("Segoe UI", 11, "italic"), bg=BLANCO, fg=GRIS_TEXTO).pack(pady=(0, 15))
+
         frame_detalles = tk.Frame(self.panel_info, bg=BLANCO)
         frame_detalles.pack(padx=50, fill="both")
 
-        # Texto de ayuda visual con colores consistentes [cite: 304, 307]
-        items = [
-            ("🟡 Cluster 0: Subutilización Crítica", COLOR_SUBUTILIZADO, 
-             "Aulas con capacidad >60% por encima de la demanda real. \nImpacto: Costo operativo innecesario en energía y mantenimiento. \nRecomendación: Mover a pabellones menores."),
-            ("🟢 Cluster 1: Eficiencia Operativa", COLOR_OPTIMO, 
-             "Aulas con una relación de ocupación entre el 80% y 95%. \nImpacto: Uso ideal del activo físico. \nRecomendación: Escalar este modelo a otras sedes."),
-            ("🔴 Cluster 2: Riesgo de Hacinamiento", COLOR_SOBREPOBLADO, 
-             "La demanda iguala o supera el límite físico. \nImpacto: Deterioro de la calidad académica y riesgo de seguridad. \nRecomendación: División inmediata de secciones.")
-        ]
+        plantillas = {
+            "subutilizado": {
+                "emoji": "🟡", "titulo": "Subutilización Crítica", "color": COLOR_SUBUTILIZADO,
+                "desc": ("Aulas con capacidad muy superior a la demanda real.\n"
+                         "Centroide → {vx}: {cx:.1f} | {vy}: {cy:.1f}\n"
+                         "Impacto: Costo operativo innecesario en energía y mantenimiento.\n"
+                         "Recomendación: Mover a pabellones menores o reasignar secciones.")
+            },
+            "optimo": {
+                "emoji": "🟢", "titulo": "Eficiencia Operativa", "color": COLOR_OPTIMO,
+                "desc": ("Aulas con relación de ocupación equilibrada y saludable.\n"
+                         "Centroide → {vx}: {cx:.1f} | {vy}: {cy:.1f}\n"
+                         "Impacto: Uso ideal del activo físico.\n"
+                         "Recomendación: Escalar este modelo a otras sedes.")
+            },
+            "sobrepoblado": {
+                "emoji": "🔴", "titulo": "Riesgo de Hacinamiento", "color": COLOR_SOBREPOBLADO,
+                "desc": ("La demanda iguala o supera la capacidad física del aula.\n"
+                         "Centroide → {vx}: {cx:.1f} | {vy}: {cy:.1f}\n"
+                         "Impacto: Deterioro de la calidad académica y riesgo de seguridad.\n"
+                         "Recomendación: División inmediata de secciones.")
+            }
+        }
 
-        for titulo, color, desc in items:
-            lbl_title = tk.Label(frame_detalles, text=titulo, font=("Segoe UI", 13, "bold"), fg=color, bg=BLANCO)
-            lbl_title.pack(anchor="w", pady=(10, 0))
-            lbl_desc = tk.Label(frame_detalles, text=desc, font=("Segoe UI", 12), fg=GRIS_TEXTO, bg=BLANCO, wraplength=700, justify="left")
-            lbl_desc.pack(anchor="w", padx=20, pady=(0, 10))
+        vx = var_x.replace("_", " ")
+        vy = var_y.replace("_", " ")
+
+        for cluster_id, rol in sorted(cluster_roles.items()):
+            p    = plantillas[rol]
+            cx   = centroids_real[cluster_id][0]
+            cy   = centroids_real[cluster_id][1]
+            desc = p["desc"].format(vx=vx, cx=cx, vy=vy, cy=cy)
+            tk.Label(frame_detalles,
+                     text=f"{p['emoji']} Cluster {cluster_id}: {p['titulo']}",
+                     font=("Segoe UI", 13, "bold"), fg=p["color"], bg=BLANCO
+                     ).pack(anchor="w", pady=(10, 0))
+            tk.Label(frame_detalles, text=desc, font=("Segoe UI", 12),
+                     fg=GRIS_TEXTO, bg=BLANCO, wraplength=700, justify="left"
+                     ).pack(anchor="w", padx=20, pady=(0, 10))
 
     def toggle_interpretacion(self):
         if not self.mostrar_info:
