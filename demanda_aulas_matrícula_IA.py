@@ -1,4 +1,5 @@
 import pandas as pd
+import mysql.connector
 import numpy as np
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -28,14 +29,114 @@ COLOR_OPTIMO = "#2E7D32"        # Verde
 COLOR_SOBREPOBLADO = "#D32F2F"  # Rojo
 
 # ==============================
+# CONFIGURACIÓN DE BASE DE DATOS LOCAL MYSQL/XAMPP
+# ==============================
+DB_CONFIG = {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "root",
+    "password": "",
+    "database": "demanda_aulas_matricula_ia",
+    "charset": "utf8mb4",
+    "use_pure": True,
+}
+
+COLUMNAS_DATASET = [
+    "periodo",
+    "id_curso",
+    "nombre_curso",
+    "ciclo_relativo",
+    "creditos_curso",
+    "docente_id",
+    "docente_disponible",
+    "aula_id",
+    "capacidad_aula",
+    "pabellon",
+    "horario_seccion",
+    "alumnos_nuevos",
+    "alumnos_prerrequisito",
+    "alumnos_repitentes",
+    "veces_llevado",
+    "carga_academica_proyectada",
+    "cursos_comun",
+    "duracion_semanas",
+    "laboratorio",
+    "tiempo_matricula_min",
+    "alumnos_matriculados",
+]
+
+COLUMNAS_NUMERICAS = [
+    "id_curso",
+    "ciclo_relativo",
+    "creditos_curso",
+    "docente_id",
+    "docente_disponible",
+    "aula_id",
+    "capacidad_aula",
+    "alumnos_nuevos",
+    "alumnos_prerrequisito",
+    "alumnos_repitentes",
+    "veces_llevado",
+    "carga_academica_proyectada",
+    "cursos_comun",
+    "duracion_semanas",
+    "laboratorio",
+    "tiempo_matricula_min",
+    "alumnos_matriculados",
+]
+
+# ==============================
 # CARGA Y PREPARACIÓN DE DATOS
 # ==============================
 def cargar_datos():
+    """Carga el dataset desde MySQL local manteniendo las mismas columnas del Excel."""
+    conexion = None
+    cursor = None
     try:
-        return pd.read_excel("data_prediccion_aulas.xlsx")
+        conexion = mysql.connector.connect(**DB_CONFIG)
+        cursor = conexion.cursor(dictionary=True)
+
+        columnas_sql = ", ".join(COLUMNAS_DATASET)
+        consulta = f"""
+            SELECT {columnas_sql}
+            FROM vw_dataset_prediccion_aulas
+            ORDER BY id_registro
+        """
+        cursor.execute(consulta)
+        filas = cursor.fetchall()
+
+        df = pd.DataFrame(filas, columns=COLUMNAS_DATASET)
+        if df.empty:
+            messagebox.showerror(
+                "Error",
+                "La base de datos no devolvió registros. Verifica que importaste el script SQL."
+            )
+            return pd.DataFrame()
+
+        for columna in COLUMNAS_NUMERICAS:
+            df[columna] = pd.to_numeric(df[columna], errors="coerce")
+
+        if df[COLUMNAS_NUMERICAS].isnull().any().any():
+            raise ValueError("Existen valores numéricos vacíos o inválidos en la vista SQL.")
+
+        df[COLUMNAS_NUMERICAS] = df[COLUMNAS_NUMERICAS].astype(int)
+        return df
+
     except Exception as e:
-        messagebox.showerror("Error", "No se encontró el dataset. Ejecuta primero el generador.")
+        messagebox.showerror(
+            "Error de conexión BD",
+            "No se pudo cargar el dataset desde MySQL."
+            "Verifica que Apache/MySQL estén activos en XAMPP, que la BD exista "
+            "y que el usuario/contraseña de DB_CONFIG sean correctos."
+            f"Detalle técnico: {e}"
+        )
         return pd.DataFrame()
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conexion is not None and conexion.is_connected():
+            conexion.close()
 
 def preparar_datos(df):
     # Variables predictoras alineadas a los requerimientos del proyecto
@@ -372,7 +473,7 @@ class AppDemandaAulas:
                                c=color, alpha=0.7, edgecolors='w', s=80,
                                label=f"Cluster {cid}")
 
-        ax_scatter.set_title(f"Clustering K=3: {var_x} vs {var_y}", fontsize=13, pad=15)
+        ax_scatter.set_title(f"K=3: {var_x} vs {var_y}", fontsize=13, pad=15)
         ax_scatter.set_xlabel(var_x.replace("_", " ").title(), fontsize=11)
         ax_scatter.set_ylabel(var_y.replace("_", " ").title(), fontsize=11)
         ax_scatter.legend(fontsize=9)
