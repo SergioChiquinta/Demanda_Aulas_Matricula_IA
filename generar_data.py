@@ -1,3 +1,11 @@
+# =====================================
+# ARCHIVO PARA GENERAR DATASET EN EXCEL
+# =====================================
+
+# ==========================================================================================================
+# No recomendable aplicar para esta versión del proyecto, pero se deja como referencia para futuras mejoras.
+# ==========================================================================================================
+
 import pandas as pd
 import numpy as np
 
