@@ -650,282 +650,1012 @@ class AppDemandaAulas:
     # 3. VISTA: SIMULACIÓN
     # ==============================
     def vista_simulacion(self):
+        """Vista profesional para simular demanda, aforo, secciones y recursos.
+
+        Ajuste visual:
+        - El formulario izquierdo ahora tiene scroll vertical.
+        - El panel de resultados usa un layout vertical responsivo.
+        - La guía de variables también tiene scroll.
+        - El gráfico y la tabla ya no compiten horizontalmente por espacio.
+        """
         self.limpiar_contenedor()
 
+        # =========================
+        # HEADER
+        # =========================
         header = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
-        header.pack(fill="x", pady=20, padx=20)
+        header.pack(fill="x", pady=(18, 5), padx=28)
 
-        tk.Label(header, text="Simulador Predictivo de Demanda",
-                font=FUENTE_TITULO, bg=GRIS_FONDO).pack(side="left")
-        
-        self.btn_guia = tk.Button(header, text="Guía de Variables 📘", font=FUENTE_NORMAL,
-                                 bg=ROJO_UTP, fg=BLANCO, command=self.toggle_guia_simulacion)
-        self.btn_guia.pack(side="right")
+        titulo_header = tk.Label(
+            header,
+            text="Simulador Predictivo de Carga de Aulas",
+            font=("Segoe UI", 22, "bold"),
+            bg=GRIS_FONDO,
+            fg=NEGRO
+        )
+        titulo_header.pack(side="left", fill="x", expand=True, anchor="w")
 
-        # Panel Izquierdo: Formulario (Ahora con expand=False para no empujar todo a la derecha)
-        f_form = tk.LabelFrame(self.contenedor_principal, text="Parámetros de Entrada",
-                             font=FUENTE_SUBTITULO, bg=BLANCO, padx=20, pady=20)
-        f_form.pack(side="left", fill="y", padx=(40, 10), pady=20)
+        acciones = tk.Frame(header, bg=GRIS_FONDO)
+        acciones.pack(side="right", anchor="e")
 
-        # Panel Derecho: Resultados (Ahora ocupa todo el resto del espacio)
-        self.f_res_container = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
-        self.f_res_container.pack(side="right", fill="both", padx=(10, 40), pady=20, expand=True)
+        self.btn_guia = tk.Button(
+            acciones,
+            text="Guía de Variables 📘",
+            font=FUENTE_NORMAL,
+            bg=ROJO_UTP,
+            fg=BLANCO,
+            activebackground=ROJO_CLARO,
+            activeforeground=BLANCO,
+            bd=0,
+            padx=14,
+            pady=8,
+            cursor="hand2",
+            command=self.toggle_guia_simulacion
+        )
+        self.btn_guia.pack(side="left", padx=5)
 
-        # VARIABLES
+        self.btn_detalles = tk.Button(
+            acciones,
+            text="Informe Detallado 📄",
+            font=FUENTE_NORMAL,
+            bg=NEGRO,
+            fg=BLANCO,
+            activebackground=GRIS_TEXTO,
+            activeforeground=BLANCO,
+            bd=0,
+            padx=14,
+            pady=8,
+            cursor="hand2",
+            command=self.toggle_detalles
+        )
+        self.btn_detalles.pack(side="left", padx=5)
+
+        subtitulo = tk.Label(
+            self.contenedor_principal,
+            text="Evalúa demanda estimada, capacidad efectiva, secciones necesarias, ocupación y disponibilidad docente.",
+            font=("Segoe UI", 10),
+            bg=GRIS_FONDO,
+            fg=GRIS_TEXTO
+        )
+        subtitulo.pack(anchor="w", padx=30, pady=(0, 8))
+
+        # =========================
+        # CONTENEDOR GENERAL RESPONSIVO
+        # =========================
+        cuerpo = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        cuerpo.pack(fill="both", expand=True, padx=28, pady=(0, 18))
+        cuerpo.columnconfigure(0, weight=0, minsize=410)
+        cuerpo.columnconfigure(1, weight=1)
+        cuerpo.rowconfigure(0, weight=1)
+
+        # =========================
+        # PANEL IZQUIERDO: FORMULARIO CON SCROLL
+        # =========================
+        f_form_outer = tk.LabelFrame(
+            cuerpo,
+            text="Parámetros del escenario",
+            font=FUENTE_SUBTITULO,
+            bg=BLANCO,
+            fg=NEGRO,
+            padx=6,
+            pady=6
+        )
+        f_form_outer.grid(row=0, column=0, sticky="ns", padx=(0, 18), pady=4)
+        f_form_outer.grid_propagate(False)
+        f_form_outer.configure(width=420)
+
+        canvas_form = tk.Canvas(f_form_outer, bg=BLANCO, highlightthickness=0, width=398)
+        scrollbar_form = ttk.Scrollbar(f_form_outer, orient="vertical", command=canvas_form.yview)
+        self.form_sim = tk.Frame(canvas_form, bg=BLANCO)
+
+        form_window = canvas_form.create_window((0, 0), window=self.form_sim, anchor="nw")
+        self.form_sim.bind(
+            "<Configure>",
+            lambda e: canvas_form.configure(scrollregion=canvas_form.bbox("all"))
+        )
+        canvas_form.bind(
+            "<Configure>",
+            lambda e: canvas_form.itemconfig(form_window, width=e.width)
+        )
+        canvas_form.configure(yscrollcommand=scrollbar_form.set)
+        canvas_form.pack(side="left", fill="both", expand=True)
+        scrollbar_form.pack(side="right", fill="y")
+
+        # Capacidad base fija en 40 porque la BD fue ajustada a aulas homogéneas.
+        capacidad_base = 40
+        if "capacidad_aula" in self.df.columns and len(self.df["capacidad_aula"]) > 0:
+            try:
+                capacidad_base = int(round(float(self.df["capacidad_aula"].median())))
+            except Exception:
+                capacidad_base = 40
+
         self.vars_input = {
-            "alumnos_nuevos": tk.IntVar(value=20), "alumnos_prerrequisito": tk.IntVar(value=15),
-            "alumnos_repitentes": tk.IntVar(value=5), "capacidad_aula": tk.IntVar(value=40),
-            "duracion_semanas": tk.IntVar(value=18), "docente_disponible": tk.IntVar(value=1),
-            "laboratorio": tk.IntVar(value=0)
+            "alumnos_nuevos": tk.IntVar(value=25),
+            "alumnos_prerrequisito": tk.IntVar(value=20),
+            "alumnos_repitentes": tk.IntVar(value=8),
+            "capacidad_aula": tk.IntVar(value=capacidad_base),
+            "duracion_semanas": tk.IntVar(value=18),
+            "docentes_disponibles": tk.IntVar(value=2),
+            "laboratorio": tk.IntVar(value=0),
         }
 
-        # FORMULARIO
-        row = 0
-        for k, v in self.vars_input.items():
-            tk.Label(f_form, text=k.replace("_", " ").title(), font=FUENTE_NORMAL, bg=BLANCO).grid(row=row, column=0, sticky="w", pady=10)
-            if k == "laboratorio":
-                tk.Checkbutton(f_form, text="Requiere laboratorio", variable=v, bg=BLANCO).grid(row=row, column=1, sticky="w")
-            else:
-                tk.Entry(f_form, textvariable=v, font=FUENTE_NORMAL, width=10).grid(row=row, column=1, padx=10)
-            row += 1
+        self.form_sim.columnconfigure(0, weight=1)
+        self.form_sim.columnconfigure(1, weight=0)
 
-        tk.Button(f_form, text="EJECUTAR MODELO IA", font=FUENTE_SUBTITULO, bg=ROJO_UTP, fg=BLANCO,
-                command=self.realizar_prediccion).grid(row=row, columnspan=2, pady=30, sticky="we")
+        fila = 0
+        fila = self._crear_input_sim(
+            self.form_sim, fila, "Alumnos nuevos", self.vars_input["alumnos_nuevos"],
+            0, 120, "Demanda nueva esperada para el curso."
+        )
+        fila = self._crear_input_sim(
+            self.form_sim, fila, "Alumnos con prerrequisito", self.vars_input["alumnos_prerrequisito"],
+            0, 120, "Estudiantes habilitados para llevar la asignatura."
+        )
+        fila = self._crear_input_sim(
+            self.form_sim, fila, "Alumnos repitentes", self.vars_input["alumnos_repitentes"],
+            0, 80, "Sobrecarga académica por repetición del curso."
+        )
+        fila = self._crear_input_sim(
+            self.form_sim, fila, "Capacidad por aula", self.vars_input["capacidad_aula"],
+            1, 120, "Capacidad física base. En este avance se usa 40."
+        )
+        fila = self._crear_input_sim(
+            self.form_sim, fila, "Duración en semanas", self.vars_input["duracion_semanas"],
+            1, 24, "Duración operativa del curso en el periodo."
+        )
+        fila = self._crear_input_sim(
+            self.form_sim, fila, "Docentes disponibles", self.vars_input["docentes_disponibles"],
+            0, 20, "Recursos docentes disponibles para abrir secciones."
+        )
 
-        # PANEL RESULTADO (VISTA INICIAL)
+        tk.Label(
+            self.form_sim,
+            text="Requiere laboratorio",
+            font=FUENTE_NORMAL,
+            bg=BLANCO,
+            fg=NEGRO
+        ).grid(row=fila, column=0, sticky="w", padx=12, pady=(8, 0))
+
+        tk.Checkbutton(
+            self.form_sim,
+            text="Sí, reduce capacidad efectiva",
+            variable=self.vars_input["laboratorio"],
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            activebackground=BLANCO,
+            font=("Segoe UI", 9)
+        ).grid(row=fila, column=1, sticky="e", padx=(0, 12), pady=(8, 0))
+        fila += 1
+
+        tk.Label(
+            self.form_sim,
+            text="Si el curso usa laboratorio, se reserva espacio para equipos y seguridad.",
+            font=("Segoe UI", 8),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            wraplength=280,
+            justify="left"
+        ).grid(row=fila, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 8))
+        fila += 1
+
+        tk.Label(
+            self.form_sim,
+            text="Escenario de planificación",
+            font=FUENTE_NORMAL,
+            bg=BLANCO,
+            fg=NEGRO
+        ).grid(row=fila, column=0, sticky="w", padx=12, pady=(8, 2))
+
+        self.combo_escenario_sim = ttk.Combobox(
+            self.form_sim,
+            values=["Conservador (+MAE)", "Base IA", "Optimista (-MAE)"],
+            state="readonly",
+            width=20
+        )
+        self.combo_escenario_sim.set("Conservador (+MAE)")
+        self.combo_escenario_sim.grid(row=fila, column=1, sticky="e", padx=(0, 12), pady=(8, 2))
+        fila += 1
+
+        tk.Label(
+            self.form_sim,
+            text="Conservador usa el margen de error para reducir riesgo de falta de cupos.",
+            font=("Segoe UI", 8),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            wraplength=280,
+            justify="left"
+        ).grid(row=fila, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 8))
+        fila += 1
+
+        tk.Label(
+            self.form_sim,
+            text="Turno / Pabellón referencial",
+            font=FUENTE_NORMAL,
+            bg=BLANCO,
+            fg=NEGRO
+        ).grid(row=fila, column=0, sticky="w", padx=12, pady=(8, 2))
+
+        contexto = tk.Frame(self.form_sim, bg=BLANCO)
+        contexto.grid(row=fila, column=1, sticky="e", padx=(0, 12), pady=(8, 2))
+
+        horarios = sorted([str(x) for x in self.df["horario_seccion"].dropna().unique()]) if "horario_seccion" in self.df.columns else ["Mañana", "Tarde", "Noche"]
+        pabellones = sorted([str(x) for x in self.df["pabellon"].dropna().unique()]) if "pabellon" in self.df.columns else ["A", "B", "C"]
+
+        self.combo_turno_sim = ttk.Combobox(contexto, values=horarios, state="readonly", width=9)
+        self.combo_turno_sim.set(horarios[0] if horarios else "Mañana")
+        self.combo_turno_sim.pack(side="left", padx=(0, 5))
+
+        self.combo_pabellon_sim = ttk.Combobox(contexto, values=pabellones, state="readonly", width=4)
+        self.combo_pabellon_sim.set(pabellones[0] if pabellones else "A")
+        self.combo_pabellon_sim.pack(side="left")
+        fila += 1
+
+        tk.Button(
+            self.form_sim,
+            text="EJECUTAR SIMULACIÓN IA",
+            font=FUENTE_SUBTITULO,
+            bg=ROJO_UTP,
+            fg=BLANCO,
+            activebackground=ROJO_CLARO,
+            activeforeground=BLANCO,
+            bd=0,
+            pady=10,
+            cursor="hand2",
+            command=self.realizar_prediccion
+        ).grid(row=fila, column=0, columnspan=2, padx=12, pady=(22, 8), sticky="we")
+        fila += 1
+
+        tk.Button(
+            self.form_sim,
+            text="Restablecer valores",
+            font=FUENTE_NORMAL,
+            bg=GRIS_TEXTO,
+            fg=BLANCO,
+            activebackground=NEGRO,
+            activeforeground=BLANCO,
+            bd=0,
+            pady=7,
+            cursor="hand2",
+            command=self._restablecer_simulacion
+        ).grid(row=fila, column=0, columnspan=2, padx=12, pady=(0, 12), sticky="we")
+
+        # =========================
+        # PANEL DERECHO
+        # =========================
+        self.f_res_container = tk.Frame(cuerpo, bg=GRIS_FONDO)
+        self.f_res_container.grid(row=0, column=1, sticky="nsew", pady=4)
+        self.f_res_container.columnconfigure(0, weight=1)
+        self.f_res_container.rowconfigure(0, weight=1)
+
+        # Resultado principal con scroll para pantallas pequeñas.
         self.panel_resultado_sim = tk.Frame(self.f_res_container, bg=GRIS_FONDO)
         self.panel_resultado_sim.pack(fill="both", expand=True)
 
-        self.lbl_pred = tk.Label(self.panel_resultado_sim, text="---", font=("Segoe UI", 52, "bold"), bg=GRIS_FONDO)
-        self.lbl_pred.pack(pady=30)
+        canvas_result = tk.Canvas(self.panel_resultado_sim, bg=GRIS_FONDO, highlightthickness=0)
+        scroll_result = ttk.Scrollbar(self.panel_resultado_sim, orient="vertical", command=canvas_result.yview)
+        self.resultado_content_sim = tk.Frame(canvas_result, bg=GRIS_FONDO)
 
-        self.lbl_estado = tk.Label(self.panel_resultado_sim, text="Esperando simulación...", font=FUENTE_SUBTITULO, bg=GRIS_FONDO)
-        self.lbl_estado.pack(pady=10)
+        result_window = canvas_result.create_window((0, 0), window=self.resultado_content_sim, anchor="nw")
+        self.resultado_content_sim.bind(
+            "<Configure>",
+            lambda e: canvas_result.configure(scrollregion=canvas_result.bbox("all"))
+        )
+        canvas_result.bind(
+            "<Configure>",
+            lambda e: canvas_result.itemconfig(result_window, width=e.width)
+        )
+        canvas_result.configure(yscrollcommand=scroll_result.set)
+        canvas_result.pack(side="left", fill="both", expand=True)
+        scroll_result.pack(side="right", fill="y")
 
-        self.btn_detalles = tk.Button(self.panel_resultado_sim, text="Ver Detalles 📊", font=FUENTE_NORMAL,
-                                    bg=ROJO_UTP, fg=BLANCO, command=self.toggle_detalles)
-        self.btn_detalles.pack(pady=20)
+        # Banner de estado responsivo.
+        self.banner_sim = tk.Frame(self.resultado_content_sim, bg=BLANCO, bd=1, relief="solid")
+        self.banner_sim.pack(fill="x", pady=(0, 10))
 
-        # PANEL DETALLE CON SCROLLBAR (Ocupa el espacio central)
+        self.lbl_pred = tk.Label(
+            self.banner_sim,
+            text="Ejecuta una simulación",
+            font=("Segoe UI", 18, "bold"),
+            bg=BLANCO,
+            fg=ROJO_UTP,
+            justify="left"
+        )
+        self.lbl_pred.pack(anchor="w", padx=16, pady=(12, 2), fill="x")
+
+        self.lbl_estado = tk.Label(
+            self.banner_sim,
+            text="El sistema calculará demanda, aulas, ocupación, cupos y recursos docentes.",
+            font=("Segoe UI", 10),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            justify="left"
+        )
+        self.lbl_estado.pack(anchor="w", padx=16, pady=(0, 12), fill="x")
+
+        self.banner_sim.bind(
+            "<Configure>",
+            lambda e: (
+                self.lbl_pred.configure(wraplength=max(350, e.width - 40)),
+                self.lbl_estado.configure(wraplength=max(350, e.width - 40))
+            )
+        )
+
+        # KPIs en 2x2 para evitar textos cortados.
+        self.frame_kpis_sim = tk.Frame(self.resultado_content_sim, bg=GRIS_FONDO)
+        self.frame_kpis_sim.pack(fill="x", pady=(0, 10))
+        self.frame_kpis_sim.columnconfigure(0, weight=1)
+        self.frame_kpis_sim.columnconfigure(1, weight=1)
+
+        self.sim_kpi_labels = {}
+        self._crear_card_sim(self.frame_kpis_sim, "Demanda IA", "---", "demanda")
+        self._crear_card_sim(self.frame_kpis_sim, "Demanda a planificar", "---", "planificacion")
+        self._crear_card_sim(self.frame_kpis_sim, "Aulas recomendadas", "---", "aulas")
+        self._crear_card_sim(self.frame_kpis_sim, "Ocupación promedio", "---", "ocupacion")
+
+        # Resultado central en vertical: gráfico arriba, tabla abajo.
+        self.panel_grafico_sim = tk.Frame(self.resultado_content_sim, bg=BLANCO, bd=1, relief="solid")
+        self.panel_grafico_sim.pack(fill="both", expand=False, pady=(0, 10))
+
+        self.panel_tabla_sim = tk.Frame(self.resultado_content_sim, bg=BLANCO, bd=1, relief="solid")
+        self.panel_tabla_sim.pack(fill="both", expand=True, pady=(0, 5))
+
+        tk.Label(
+            self.panel_tabla_sim,
+            text="Distribución sugerida por sección",
+            font=FUENTE_SUBTITULO,
+            bg=BLANCO,
+            fg=NEGRO
+        ).pack(anchor="w", padx=15, pady=(12, 5))
+
+        columnas = ("seccion", "aula", "capacidad", "alumnos", "ocupacion", "estado")
+        self.tree_secciones = ttk.Treeview(
+            self.panel_tabla_sim,
+            columns=columnas,
+            show="headings",
+            height=6
+        )
+
+        encabezados = {
+            "seccion": "Sección",
+            "aula": "Aula",
+            "capacidad": "Capacidad",
+            "alumnos": "Alumnos",
+            "ocupacion": "Ocupación",
+            "estado": "Estado"
+        }
+
+        anchos = {
+            "seccion": 70,
+            "aula": 90,
+            "capacidad": 90,
+            "alumnos": 90,
+            "ocupacion": 95,
+            "estado": 130
+        }
+
+        for col in columnas:
+            self.tree_secciones.heading(col, text=encabezados[col])
+            self.tree_secciones.column(col, anchor="center", width=anchos[col], stretch=True)
+
+        scroll_y = ttk.Scrollbar(self.panel_tabla_sim, orient="vertical", command=self.tree_secciones.yview)
+        self.tree_secciones.configure(yscrollcommand=scroll_y.set)
+        self.tree_secciones.pack(side="left", fill="both", expand=True, padx=(15, 0), pady=(5, 15))
+        scroll_y.pack(side="right", fill="y", padx=(0, 15), pady=(5, 15))
+
+        # =========================
+        # INFORME DETALLADO CON SCROLL
+        # =========================
         self.container_scroll = tk.Frame(self.f_res_container, bg=BLANCO, bd=1, relief="solid")
-        
-        canvas = tk.Canvas(self.container_scroll, bg=BLANCO, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(self.container_scroll, orient="vertical", command=canvas.yview)
+        canvas = tk.Canvas(self.container_scroll, bg=BLANCO, highlightthickness=0, yscrollincrement=18)
+        scrollbar = tk.Scrollbar(
+            self.container_scroll,
+            orient="vertical",
+            command=canvas.yview,
+            width=18,
+            bd=1,
+            relief="solid",
+            bg=ROJO_UTP,
+            activebackground=ROJO_CLARO,
+            troughcolor="#E0E0E0"
+        )
         self.panel_detalle = tk.Frame(canvas, bg=BLANCO)
 
+        detalle_window = canvas.create_window((0, 0), window=self.panel_detalle, anchor="nw")
         self.panel_detalle.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas_window = canvas.create_window((0, 0), window=self.panel_detalle, anchor="nw")
-        canvas.bind('<Configure>', lambda e: canvas.itemconfig(canvas_window, width=e.width))
-
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(detalle_window, width=e.width))
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        self._habilitar_scroll_mouse(canvas)
 
-        # ANCHO AUMENTADO SEGÚN TEXTO
-        self.lbl_detalle = tk.Message(self.panel_detalle, text="", font=FUENTE_NORMAL, 
-                                     bg=BLANCO, width=900, justify="left") # Ancho ajustado a 900
-        self.lbl_detalle.pack(padx=20, pady=20, fill="x")
+        tk.Label(
+            self.panel_detalle,
+            text="Informe técnico de simulación",
+            font=("Segoe UI", 22, "bold"),
+            bg=BLANCO,
+            fg=ROJO_UTP
+        ).pack(anchor="w", padx=25, pady=(20, 5))
 
-        self.btn_volver = tk.Button(self.panel_detalle, text="Volver 🔙", font=FUENTE_NORMAL,
-                                  bg=NEGRO, fg=BLANCO, command=self.volver_resultado)
-        self.btn_volver.pack(pady=20)
+        self.lbl_detalle = tk.Message(
+            self.panel_detalle,
+            text="Ejecuta una simulación para generar el informe operativo.",
+            font=("Segoe UI", 11),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            width=850,
+            justify="left"
+        )
+        self.lbl_detalle.pack(anchor="w", padx=25, pady=10, fill="x")
 
-        # =========================
-        # PANEL GUÍA (MEJORADO)
-        # =========================
-        self.panel_guia_sim = tk.Frame(self.f_res_container, bg=BLANCO, bd=1, relief="solid")
-
-        txt_guia = (
-            "📌 GUÍA COMPLETA DE VARIABLES\n\n"
-
-            "• Alumnos Nuevos:\n"
-            "  Principal motor de crecimiento. Impacta directamente la demanda.\n\n"
-
-            "• Alumnos con Prerrequisito:\n"
-            "  Representan continuidad académica. Ayudan a estabilizar la demanda.\n\n"
-
-            "• Alumnos Repitentes:\n"
-            "  Generan sobrecarga inesperada. Aumentan riesgo operativo.\n\n"
-
-            "• Capacidad del Aula:\n"
-            "  Límite físico. Define cuántos alumnos pueden ser asignados.\n\n"
-
-            "• Duración (Semanas):\n"
-            "  A mayor duración, menor rotación de aulas disponibles.\n\n"
-
-            "• Docentes Disponibles:\n"
-            "  Limita cuántas secciones pueden abrirse simultáneamente.\n\n"
-
-            "• Laboratorio (Checkbox):\n"
-            "  ✔ Activado → Reduce capacidad en 15% por equipos.\n"
-            "  ✖ Desactivado → Capacidad completa del aula.\n"
+        self.panel_detalle.bind(
+            "<Configure>",
+            lambda e: self.lbl_detalle.configure(width=max(360, e.width - 60))
         )
 
-        tk.Message(self.panel_guia_sim, text=txt_guia,
-                font=FUENTE_NORMAL, bg=BLANCO, width=500)\
-            .pack(padx=20, pady=20)
+        tk.Button(
+            self.panel_detalle,
+            text="Volver al resultado 🔙",
+            font=FUENTE_NORMAL,
+            bg=NEGRO,
+            fg=BLANCO,
+            activebackground=GRIS_TEXTO,
+            activeforeground=BLANCO,
+            bd=0,
+            padx=20,
+            pady=8,
+            cursor="hand2",
+            command=self.volver_resultado
+        ).pack(anchor="w", padx=25, pady=(5, 25))
 
-        # FLAGS
+        # =========================
+        # GUÍA CON SCROLL Y TEXTO RESPONSIVO
+        # =========================
+        self.panel_guia_sim = tk.Frame(self.f_res_container, bg=BLANCO, bd=1, relief="solid")
+        canvas_guia = tk.Canvas(self.panel_guia_sim, bg=BLANCO, highlightthickness=0, yscrollincrement=18)
+        scrollbar_guia = tk.Scrollbar(
+            self.panel_guia_sim,
+            orient="vertical",
+            command=canvas_guia.yview,
+            width=18,
+            bd=1,
+            relief="solid",
+            bg=ROJO_UTP,
+            activebackground=ROJO_CLARO,
+            troughcolor="#E0E0E0"
+        )
+        guia_content = tk.Frame(canvas_guia, bg=BLANCO)
+
+        guia_window = canvas_guia.create_window((0, 0), window=guia_content, anchor="nw")
+        guia_content.bind("<Configure>", lambda e: canvas_guia.configure(scrollregion=canvas_guia.bbox("all")))
+        canvas_guia.bind("<Configure>", lambda e: canvas_guia.itemconfig(guia_window, width=e.width))
+        canvas_guia.configure(yscrollcommand=scrollbar_guia.set)
+        canvas_guia.pack(side="left", fill="both", expand=True)
+        scrollbar_guia.pack(side="right", fill="y")
+        self._habilitar_scroll_mouse(canvas_guia)
+
+        tk.Label(
+            guia_content,
+            text="Guía del simulador",
+            font=("Segoe UI", 22, "bold"),
+            bg=BLANCO,
+            fg=ROJO_UTP,
+            justify="left"
+        ).pack(anchor="w", padx=25, pady=(20, 8), fill="x")
+
+        txt_guia = (
+            "Este módulo convierte la predicción de matrícula en una decisión de infraestructura.\n\n"
+            "1) Predicción IA:\n"
+            "Usa el modelo entrenado con alumnos nuevos, prerrequisitos, repitentes, docente disponible, "
+            "capacidad, duración y laboratorio.\n\n"
+            "2) Escenario de planificación:\n"
+            "• Conservador (+MAE): suma el margen de error promedio para reducir riesgo de falta de cupos.\n"
+            "• Base IA: usa directamente la predicción central del modelo.\n"
+            "• Optimista (-MAE): reduce el margen para escenarios de menor demanda.\n\n"
+            "3) Capacidad efectiva:\n"
+            "Si el curso requiere laboratorio, la capacidad se reduce 15% por equipos, movilidad y seguridad.\n\n"
+            "4) Aulas recomendadas:\n"
+            "No solo se calcula el mínimo por aforo. También se usa una ocupación segura del 90%, "
+            "para evitar aulas al límite.\n\n"
+            "5) Docentes requeridos:\n"
+            "Se asume 1 docente por sección. Si faltan docentes, el estado operativo se marca como crítico.\n\n"
+            "6) Distribución sugerida:\n"
+            "Reparte la demanda de planificación entre las secciones recomendadas para facilitar la asignación."
+        )
+
+        self.lbl_guia_sim = tk.Message(
+            guia_content,
+            text=txt_guia,
+            font=("Segoe UI", 11),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            width=850,
+            justify="left"
+        )
+        self.lbl_guia_sim.pack(anchor="w", padx=25, pady=10, fill="x")
+
+        guia_content.bind(
+            "<Configure>",
+            lambda e: self.lbl_guia_sim.configure(width=max(360, e.width - 60))
+        )
+
+        tk.Button(
+            guia_content,
+            text="Volver al simulador 🔙",
+            font=FUENTE_NORMAL,
+            bg=NEGRO,
+            fg=BLANCO,
+            activebackground=GRIS_TEXTO,
+            activeforeground=BLANCO,
+            bd=0,
+            padx=20,
+            pady=8,
+            cursor="hand2",
+            command=self.volver_resultado
+        ).pack(anchor="w", padx=25, pady=(5, 25))
+
         self.mostrar_guia_sim = False
         self.mostrar_detalle = False
 
+        # Estado inicial útil para exposición.
+        self._render_grafico_simulacion(0, 0, 0, 40)
+        self.tree_secciones.insert("", "end", values=("-", "Ejecutar", "-", "-", "-", "-"))
+        self.realizar_prediccion()
+
+    def _habilitar_scroll_mouse(self, canvas):
+        """Activa desplazamiento con rueda del mouse en paneles Canvas con scrollbar visible."""
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_linux_scroll_up(event):
+            canvas.yview_scroll(-1, "units")
+
+        def _on_linux_scroll_down(event):
+            canvas.yview_scroll(1, "units")
+
+        def _bind_scroll(_event):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            canvas.bind_all("<Button-4>", _on_linux_scroll_up)
+            canvas.bind_all("<Button-5>", _on_linux_scroll_down)
+
+        def _unbind_scroll(_event):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        canvas.bind("<Enter>", _bind_scroll)
+        canvas.bind("<Leave>", _unbind_scroll)
+
+    def _crear_input_sim(self, parent, fila, etiqueta, variable, minimo, maximo, ayuda):
+        """Crea una entrada numérica uniforme para el formulario de simulación."""
+        tk.Label(
+            parent,
+            text=etiqueta,
+            font=("Segoe UI", 10),
+            bg=BLANCO,
+            fg=NEGRO
+        ).grid(row=fila, column=0, sticky="w", padx=12, pady=(7, 0))
+
+        spin = tk.Spinbox(
+            parent,
+            from_=minimo,
+            to=maximo,
+            textvariable=variable,
+            width=7,
+            font=("Segoe UI", 10),
+            justify="center"
+        )
+        spin.grid(row=fila, column=1, sticky="e", padx=(0, 12), pady=(7, 0))
+        fila += 1
+
+        tk.Label(
+            parent,
+            text=ayuda,
+            font=("Segoe UI", 8),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            wraplength=280,
+            justify="left"
+        ).grid(row=fila, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 4))
+        fila += 1
+        return fila
+
+    def _crear_card_sim(self, parent, titulo, valor, clave):
+        """Crea una tarjeta KPI compacta para la simulación en una grilla 2x2."""
+        index = len(self.sim_kpi_labels)
+        fila = index // 2
+        columna = index % 2
+
+        card = tk.Frame(parent, bg=BLANCO, bd=1, relief="solid", height=82)
+        card.grid(row=fila, column=columna, sticky="nsew", padx=5, pady=5)
+        card.grid_propagate(False)
+
+        tk.Label(
+            card,
+            text=titulo,
+            font=("Segoe UI", 9),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            wraplength=230,
+            justify="center"
+        ).pack(pady=(10, 1), fill="x")
+
+        lbl = tk.Label(
+            card,
+            text=valor,
+            font=("Segoe UI", 17, "bold"),
+            bg=BLANCO,
+            fg=ROJO_UTP
+        )
+        lbl.pack()
+
+        self.sim_kpi_labels[clave] = lbl
+
+    def _restablecer_simulacion(self):
+        """Restablece valores razonables para una simulación base."""
+        self.vars_input["alumnos_nuevos"].set(25)
+        self.vars_input["alumnos_prerrequisito"].set(20)
+        self.vars_input["alumnos_repitentes"].set(8)
+        self.vars_input["capacidad_aula"].set(40)
+        self.vars_input["duracion_semanas"].set(12)
+        self.vars_input["docentes_disponibles"].set(2)
+        self.vars_input["laboratorio"].set(0)
+        self.combo_escenario_sim.set("Conservador (+MAE)")
+        self.realizar_prediccion()
+
+    def _mostrar_panel_simulacion(self, panel):
+        """Muestra uno de los paneles derechos sin destruir el estado de la vista."""
+        for p in [self.panel_resultado_sim, self.container_scroll, self.panel_guia_sim]:
+            p.pack_forget()
+        panel.pack(fill="both", expand=True)
+
     def toggle_detalles(self):
-        self.panel_resultado_sim.pack_forget()
-        self.panel_guia_sim.pack_forget()
-        self.container_scroll.pack(fill="both", expand=True)
+        self._mostrar_panel_simulacion(self.container_scroll)
+        self.mostrar_detalle = True
+        self.mostrar_guia_sim = False
 
     def volver_resultado(self):
-        self.container_scroll.pack_forget()
-        self.panel_resultado_sim.pack(fill="both", expand=True)
+        self._mostrar_panel_simulacion(self.panel_resultado_sim)
+        self.mostrar_detalle = False
+        self.mostrar_guia_sim = False
 
     def toggle_guia_simulacion(self):
-        if not self.mostrar_guia_sim:
-            self.panel_resultado_sim.pack_forget()
-            self.container_scroll.pack_forget()
-            self.panel_guia_sim.pack(fill="both", expand=True)
+        if self.mostrar_guia_sim:
+            self.volver_resultado()
         else:
-            self.panel_guia_sim.pack_forget()
-            self.panel_resultado_sim.pack(fill="both", expand=True)
-        self.mostrar_guia_sim = not self.mostrar_guia_sim
+            self._mostrar_panel_simulacion(self.panel_guia_sim)
+            self.mostrar_guia_sim = True
+            self.mostrar_detalle = False
+
+    def _clasificar_ocupacion(self, ratio):
+        """Devuelve estado textual y color según ocupación."""
+        if ratio > 1:
+            return "Excede aforo", COLOR_SOBREPOBLADO
+        if ratio >= 0.90:
+            return "Ajustado", "#B8860B"
+        if ratio >= 0.65:
+            return "Óptimo", COLOR_OPTIMO
+        if ratio >= 0.45:
+            return "Baja ocupación", "#B8860B"
+        return "Subutilizado", COLOR_SUBUTILIZADO
+
+    def _render_grafico_simulacion(self, demanda_base, demanda_plan, cupos_planificados, capacidad_aula):
+        """Renderiza gráfico comparativo de demanda y capacidad planificada."""
+        for widget in self.panel_grafico_sim.winfo_children():
+            widget.destroy()
+
+        fig_prev = getattr(self, "_fig_simulacion", None)
+        if fig_prev is not None:
+            plt.close(fig_prev)
+
+        self._fig_simulacion, ax = plt.subplots(figsize=(7.6, 3.15))
+        self._fig_simulacion.patch.set_facecolor(BLANCO)
+
+        etiquetas = ["IA", "Planificada", "Cupos"]
+        valores = [demanda_base, demanda_plan, cupos_planificados]
+        colores = [ROJO_UTP, ROJO_CLARO, COLOR_OPTIMO]
+
+        barras = ax.bar(etiquetas, valores, color=colores, alpha=0.88, width=0.55)
+
+        limite_superior = max(max(valores + [capacidad_aula]) * 1.25, capacidad_aula + 10)
+        for barra, valor in zip(barras, valores):
+            ax.text(
+                barra.get_x() + barra.get_width() / 2,
+                barra.get_height() + limite_superior * 0.02,
+                f"{int(valor)}",
+                ha="center",
+                va="bottom",
+                fontsize=10,
+                fontweight="bold"
+            )
+
+        ax.axhline(y=capacidad_aula, linestyle="--", linewidth=1.2, color=GRIS_TEXTO, alpha=0.7)
+        ax.text(
+            -0.35,
+            capacidad_aula + limite_superior * 0.025,
+            f"Capacidad por aula: {capacidad_aula}",
+            fontsize=9,
+            color=GRIS_TEXTO
+        )
+
+        ax.set_title("Demanda vs capacidad operativa", fontsize=13, pad=10)
+        ax.set_ylabel("Alumnos / cupos", fontsize=10)
+        ax.set_ylim(0, limite_superior)
+        ax.tick_params(axis="x", labelsize=10)
+        ax.grid(True, axis="y", linestyle="--", alpha=0.35)
+        ax.set_facecolor("#F9F9F9")
+        plt.tight_layout(pad=1.5)
+
+        canvas = FigureCanvasTkAgg(self._fig_simulacion, master=self.panel_grafico_sim)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=8)
 
     def realizar_prediccion(self):
         try:
             # =========================
-            # 1. INPUTS
+            # 1. LECTURA Y VALIDACIÓN
             # =========================
-            alumnos_nuevos = self.vars_input["alumnos_nuevos"].get()
-            alumnos_pre = self.vars_input["alumnos_prerrequisito"].get()
-            alumnos_rep = self.vars_input["alumnos_repitentes"].get()
-            capacidad = self.vars_input["capacidad_aula"].get()
-            duracion = self.vars_input["duracion_semanas"].get()
-            docente_disp = self.vars_input["docente_disponible"].get()
-            laboratorio = self.vars_input["laboratorio"].get()
-            lab_texto = "Sí (reduce capacidad)" if laboratorio == 1 else "No"
+            alumnos_nuevos = int(self.vars_input["alumnos_nuevos"].get())
+            alumnos_pre = int(self.vars_input["alumnos_prerrequisito"].get())
+            alumnos_rep = int(self.vars_input["alumnos_repitentes"].get())
+            capacidad = int(self.vars_input["capacidad_aula"].get())
+            duracion = int(self.vars_input["duracion_semanas"].get())
+            docentes_disponibles = int(self.vars_input["docentes_disponibles"].get())
+            laboratorio = int(self.vars_input["laboratorio"].get())
+
+            if min(alumnos_nuevos, alumnos_pre, alumnos_rep, capacidad, duracion, docentes_disponibles) < 0:
+                raise ValueError("No se permiten valores negativos.")
+            if capacidad <= 0:
+                raise ValueError("La capacidad del aula debe ser mayor a cero.")
+            if duracion <= 0:
+                raise ValueError("La duración debe ser mayor a cero.")
+            if laboratorio not in [0, 1]:
+                laboratorio = 1 if laboratorio else 0
+
+            turno = self.combo_turno_sim.get()
+            pabellon = self.combo_pabellon_sim.get()
+            escenario = self.combo_escenario_sim.get()
+
+            # El modelo entrenó con docente_disponible como variable binaria.
+            docente_disponible_modelo = 1 if docentes_disponibles > 0 else 0
 
             # =========================
             # 2. PREDICCIÓN IA
             # =========================
-            datos = [[
-                alumnos_nuevos,
-                alumnos_pre,
-                alumnos_rep,
-                docente_disp,
-                capacidad,
-                duracion,
-                laboratorio
-            ]]
+            datos_prediccion = pd.DataFrame([{
+                "alumnos_nuevos": alumnos_nuevos,
+                "alumnos_prerrequisito": alumnos_pre,
+                "alumnos_repitentes": alumnos_rep,
+                "docente_disponible": docente_disponible_modelo,
+                "capacidad_aula": capacidad,
+                "duracion_semanas": duracion,
+                "laboratorio": laboratorio
+            }])
 
-            pred = int(self.modelo_activo.predict(datos)[0])
+            pred_base = int(round(float(self.modelo_activo.predict(datos_prediccion)[0])))
+            pred_base = max(0, pred_base)
 
-            # =========================
-            # 3. AJUSTES POR LABORATORIO
-            # =========================
-            if laboratorio == 1:
-                capacidad_real = int(capacidad * 0.85)
+            mae = float(self.modelos["Regresión Lineal Múltiple"]["MAE"])
+            pred_min = max(0, int(np.floor(pred_base - mae)))
+            pred_max = max(pred_base, int(np.ceil(pred_base + mae)))
+
+            if escenario == "Optimista (-MAE)":
+                demanda_plan = pred_min
+            elif escenario == "Base IA":
+                demanda_plan = pred_base
             else:
-                capacidad_real = capacidad
+                demanda_plan = pred_max
+
+            demanda_plan = max(1, int(demanda_plan))
 
             # =========================
-            # 4. INFRAESTRUCTURA
+            # 3. CAPACIDAD Y SECCIONES
             # =========================
-            aulas_necesarias = int(np.ceil(pred / capacidad_real))
+            factor_laboratorio = 0.85 if laboratorio == 1 else 1.00
+            capacidad_efectiva = max(1, int(np.floor(capacidad * factor_laboratorio)))
 
-            saturacion = pred / capacidad_real
+            # Se recomienda no planificar al 100% de ocupación.
+            capacidad_segura = max(1, int(np.floor(capacidad_efectiva * 0.90)))
 
-            # =========================
-            # 5. DOCENTES
-            # =========================
-            docentes_necesarios = aulas_necesarias
+            aulas_minimas = max(1, int(np.ceil(demanda_plan / capacidad_efectiva)))
+            aulas_recomendadas = max(1, int(np.ceil(demanda_plan / capacidad_segura)))
+            capacidad_total = aulas_recomendadas * capacidad_efectiva
+            ocupacion_promedio = demanda_plan / capacidad_total
+            cupos_libres = capacidad_total - demanda_plan
 
-            # =========================
-            # 6. EFICIENCIA MATRÍCULA
-            # =========================
-            tiempo_hist = self.df["tiempo_matricula_min"].mean()
-            tiempo_ia = tiempo_hist * 0.7  # IA reduce 30%
-            mejora = ((tiempo_hist - tiempo_ia) / tiempo_hist) * 100
+            docentes_necesarios = aulas_recomendadas
+            deficit_docentes = max(0, docentes_necesarios - docentes_disponibles)
 
-            # =========================
-            # 7. RETIRO DE ALUMNOS
-            # =========================
-            if saturacion > 1:
-                retiro = int(pred * 0.15)
-            elif saturacion < 0.5:
-                retiro = int(pred * 0.05)
+            saturacion_sin_plan = pred_base / capacidad_efectiva
+            exceso_sin_plan = max(0, pred_base - capacidad_efectiva)
+
+            estado_ocupacion, color_ocupacion = self._clasificar_ocupacion(ocupacion_promedio)
+
+            if deficit_docentes > 0:
+                estado_general = "🔴 CRÍTICO OPERATIVO"
+                color_estado = COLOR_SOBREPOBLADO
+                recomendacion = (
+                    f"Faltan {deficit_docentes} docente(s). Asignar docentes adicionales, "
+                    "abrir otro turno o reducir la cantidad de secciones planificadas."
+                )
+            elif ocupacion_promedio > 1:
+                estado_general = "🔴 CRÍTICO POR AFORO"
+                color_estado = COLOR_SOBREPOBLADO
+                recomendacion = "La demanda supera los cupos planificados. Abrir secciones adicionales."
+            elif ocupacion_promedio >= 0.90:
+                estado_general = "🟠 AJUSTADO"
+                color_estado = "#B8860B"
+                recomendacion = "La asignación es viable, pero queda con poco margen. Conviene monitorear matrícula."
+            elif ocupacion_promedio >= 0.65:
+                estado_general = "🟢 ÓPTIMO"
+                color_estado = COLOR_OPTIMO
+                recomendacion = "La carga está equilibrada. Se recomienda aprobar esta distribución."
+            elif ocupacion_promedio >= 0.45:
+                estado_general = "🟡 BAJA OCUPACIÓN"
+                color_estado = "#B8860B"
+                recomendacion = "Hay cupos libres relevantes. Evaluar fusión de secciones si la demanda real baja."
             else:
-                retiro = int(pred * 0.08)
+                estado_general = "🟡 SUBUTILIZADO"
+                color_estado = COLOR_SUBUTILIZADO
+                recomendacion = "Demasiada capacidad ociosa. Reducir secciones o reasignar aulas."
 
             # =========================
-            # 8. RESULTADO PRINCIPAL
+            # 4. EFICIENCIA ADMINISTRATIVA
             # =========================
-            self.lbl_pred.config(text=f"{pred} Alumnos")
+            tiempo_hist = float(self.df["tiempo_matricula_min"].mean())
+            complejidad_operativa = 1 + max(0, aulas_recomendadas - 1) * 0.08 + (0.05 if laboratorio == 1 else 0)
+            tiempo_sin_ia = tiempo_hist * complejidad_operativa
+            tiempo_con_ia = tiempo_sin_ia * 0.70
+            mejora = ((tiempo_sin_ia - tiempo_con_ia) / tiempo_sin_ia) * 100
 
-            # =========================
-            # 9. INTERPRETACIÓN AVANZADA
-            # =========================
-            self.lbl_pred.config(text=f"{pred} Alumnos")
-
-            if saturacion > 1:
-                estado = "🔴 CRÍTICO"
-                color = COLOR_SOBREPOBLADO
-            elif saturacion < 0.6:
-                estado = "🟡 INEFICIENTE"
-                color = "#B8860B"
+            # Riesgo académico estimado según saturación sin planificación.
+            if saturacion_sin_plan > 1:
+                alumnos_riesgo = int(np.ceil(exceso_sin_plan * 0.60))
+                riesgo_texto = "alto si se mantiene una sola aula"
+            elif saturacion_sin_plan >= 0.90:
+                alumnos_riesgo = int(np.ceil(pred_base * 0.06))
+                riesgo_texto = "moderado por ocupación ajustada"
             else:
-                estado = "🟢 ÓPTIMO"
-                color = COLOR_OPTIMO
+                alumnos_riesgo = int(np.ceil(pred_base * 0.03))
+                riesgo_texto = "bajo"
+
+            # =========================
+            # 5. ACTUALIZAR KPIs
+            # =========================
+            self.lbl_pred.config(
+                text=f"{estado_general} — {demanda_plan} alumnos a planificar",
+                fg=color_estado
+            )
 
             self.lbl_estado.config(
-                text=f"{estado} - Saturación: {saturacion:.2f}",
-                fg=color
+                text=(
+                    f"Predicción base: {pred_base} | Intervalo operativo: {pred_min}–{pred_max} | "
+                    f"Turno: {turno} | Pabellón: {pabellon} | {recomendacion}"
+                ),
+                fg=GRIS_TEXTO
+            )
+
+            self.sim_kpi_labels["demanda"].config(text=f"{pred_base}", fg=ROJO_UTP)
+            self.sim_kpi_labels["planificacion"].config(text=f"{demanda_plan}", fg=ROJO_UTP)
+            self.sim_kpi_labels["aulas"].config(text=f"{aulas_recomendadas}", fg=color_estado)
+            self.sim_kpi_labels["ocupacion"].config(text=f"{ocupacion_promedio*100:.1f}%", fg=color_estado)
+
+            # =========================
+            # 6. TABLA DE DISTRIBUCIÓN
+            # =========================
+            for item in self.tree_secciones.get_children():
+                self.tree_secciones.delete(item)
+
+            base_por_seccion = demanda_plan // aulas_recomendadas
+            resto = demanda_plan % aulas_recomendadas
+
+            distribucion = []
+            for i in range(aulas_recomendadas):
+                alumnos_seccion = base_por_seccion + (1 if i < resto else 0)
+                ratio = alumnos_seccion / capacidad_efectiva
+                estado_sec, _ = self._clasificar_ocupacion(ratio)
+                aula_sugerida = f"{pabellon}-{i+1:02d}"
+                distribucion.append((i + 1, aula_sugerida, capacidad_efectiva, alumnos_seccion, ratio, estado_sec))
+
+                self.tree_secciones.insert(
+                    "",
+                    "end",
+                    values=(
+                        f"S{i+1}",
+                        aula_sugerida,
+                        capacidad_efectiva,
+                        alumnos_seccion,
+                        f"{ratio*100:.1f}%",
+                        estado_sec
+                    )
+                )
+
+            # =========================
+            # 7. GRÁFICO
+            # =========================
+            self._render_grafico_simulacion(
+                demanda_base=pred_base,
+                demanda_plan=demanda_plan,
+                cupos_planificados=capacidad_total,
+                capacidad_aula=capacidad_efectiva
             )
 
             # =========================
-            # DETALLE COMPLETO
+            # 8. INFORME DETALLADO
             # =========================
+            lab_texto = "Sí, capacidad reducida al 85%" if laboratorio == 1 else "No, capacidad completa"
+
             detalle = f"""
-            📊 RESULTADO OPERATIVO
+📊 RESULTADO EJECUTIVO
 
-            • Demanda estimada: {pred}
-            • Capacidad efectiva: {capacidad_real}
-            • Aulas necesarias: {aulas_necesarias}
-            • Docentes requeridos: {docentes_necesarios}
+Estado general:
+{estado_general}
 
-            📚 INTERPRETACIÓN DE VARIABLES
+Recomendación:
+{recomendacion}
 
-            • Alumnos Nuevos: Impacto directo en crecimiento de demanda
-            • Pre-requisitos: Indican flujo académico progresivo
-            • Repitentes: Generan sobrecarga no planificada
-            • Docente disponible: Limita apertura de secciones
-            • Capacidad aula: Restricción física clave
-            • Duración: Afecta disponibilidad de aulas
-            • Laboratorio: {lab_texto}
+📌 DEMANDA ESTIMADA
 
-            📉 EFICIENCIA ADMINISTRATIVA
+• Predicción base del modelo IA: {pred_base} alumnos
+• Margen de error usado (MAE): ± {mae:.2f} alumnos
+• Intervalo operativo estimado: {pred_min} a {pred_max} alumnos
+• Escenario seleccionado: {escenario}
+• Demanda usada para planificación: {demanda_plan} alumnos
 
-            • Tiempo antes: {tiempo_hist:.1f} min
-            • Tiempo con IA: {tiempo_ia:.1f} min
-            • Mejora: {mejora:.1f}%
+🏫 PLANIFICACIÓN DE AULAS
 
-            ⚠️ RIESGO ACADÉMICO
+• Capacidad física por aula: {capacidad} alumnos
+• Laboratorio: {lab_texto}
+• Capacidad efectiva por aula: {capacidad_efectiva} alumnos
+• Capacidad segura usada para planificación: {capacidad_segura} alumnos por aula
+• Aulas mínimas por aforo: {aulas_minimas}
+• Aulas recomendadas: {aulas_recomendadas}
+• Cupos planificados totales: {capacidad_total}
+• Cupos libres proyectados: {cupos_libres}
+• Ocupación promedio: {ocupacion_promedio*100:.1f}% ({estado_ocupacion})
 
-            • Retiros estimados: {retiro}
+👨‍🏫 RECURSOS DOCENTES
 
-            📌 DECISIÓN
+• Docentes disponibles: {docentes_disponibles}
+• Docentes requeridos: {docentes_necesarios}
+• Déficit docente: {deficit_docentes}
 
-            {estado}:
-            """
+⚠️ RIESGO SIN PLANIFICACIÓN
 
-            if saturacion > 1:
-                detalle += "Abrir nuevas secciones o ampliar infraestructura."
-            elif saturacion < 0.6:
-                detalle += "Reorganizar horarios o fusionar secciones."
-            else:
-                detalle += "Planificación adecuada."
+• Saturación si solo se usara 1 aula: {saturacion_sin_plan:.2f}
+• Exceso estimado sobre una sola aula: {exceso_sin_plan} alumno(s)
+• Alumnos en riesgo operativo: {alumnos_riesgo} ({riesgo_texto})
 
-            self.lbl_detalle.config(text=detalle)
+⏱️ EFICIENCIA ADMINISTRATIVA
 
-        except:
-            messagebox.showerror("Error", "Datos inválidos")
+• Tiempo histórico promedio de matrícula: {tiempo_hist:.1f} min
+• Tiempo estimado sin asistencia IA: {tiempo_sin_ia:.1f} min
+• Tiempo estimado con asistencia IA: {tiempo_con_ia:.1f} min
+• Mejora administrativa estimada: {mejora:.1f}%
+
+📚 INTERPRETACIÓN DE VARIABLES
+
+• Alumnos nuevos: {alumnos_nuevos}
+• Alumnos con prerrequisito: {alumnos_pre}
+• Alumnos repitentes: {alumnos_rep}
+• Duración del curso: {duracion} semanas
+• Turno referencial: {turno}
+• Pabellón referencial: {pabellon}
+
+🧩 DISTRIBUCIÓN SUGERIDA
+
+"""
+
+            for seccion, aula, cap, alumnos, ratio, estado_sec in distribucion:
+                detalle += f"• Sección S{seccion} → Aula {aula}: {alumnos}/{cap} alumnos ({ratio*100:.1f}%) - {estado_sec}\n"
+
+            self.lbl_detalle.config(text=detalle.strip())
+
+            # Al ejecutar, volver automáticamente al resultado principal.
+            self.volver_resultado()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Datos inválidos o incompletos.\n\nDetalle técnico: {e}")
+
 
 # ==============================
 # INICIALIZACIÓN
