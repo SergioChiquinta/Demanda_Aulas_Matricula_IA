@@ -1,4 +1,4 @@
-import pandas as pd
+﻿import pandas as pd
 import mysql.connector
 import numpy as np
 import tkinter as tk
@@ -9,6 +9,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.cluster import KMeans
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+import random
+import time
 
 # ==============================
 # PALETA DE COLORES UTP & DISEÑO
@@ -173,6 +175,177 @@ def entrenar_modelos(X, y):
     return resultados
 
 # ==============================
+# ALGORITMO GENÉTICO (METAHEURÍSTICA)
+# ==============================
+class OptimizadorGenetico:
+    def __init__(self, aulas, horarios, secciones, tam_poblacion=80, generaciones=100, tasa_cruce=0.8, tasa_mutacion=0.1):
+        self.aulas = aulas
+        self.horarios = horarios
+        self.secciones = secciones
+        self.tam_poblacion = tam_poblacion
+        self.generaciones = generaciones
+        self.tasa_cruce = tasa_cruce
+        self.tasa_mutacion = tasa_mutacion
+        
+        self.num_aulas = len(aulas)
+        self.num_horarios = len(horarios)
+        self.num_genes = len(secciones)
+        
+        # Mapeo de índices a (aula, horario)
+        self.espacio_soluciones = []
+        for i_aula in range(self.num_aulas):
+            for i_horario in range(self.num_horarios):
+                self.espacio_soluciones.append((i_aula, i_horario))
+                
+        self.tam_espacio = len(self.espacio_soluciones)
+        self.mejor_cromosoma = None
+        self.mejor_conflictos = []
+
+    def calcular_fitness(self, cromosoma):
+        penalizacion = 0
+        conflictos = []
+        
+        colisiones_aulas = {}
+        colisiones_docentes = {}
+        
+        for i_sec, gen in enumerate(cromosoma):
+            i_aula, i_horario = self.espacio_soluciones[gen]
+            aula = self.aulas[i_aula]
+            horario = self.horarios[i_horario]
+            seccion = self.secciones[i_sec]
+            
+            # 1. Colisión de Aula (Dura)
+            clave_aula = (i_aula, i_horario)
+            if clave_aula not in colisiones_aulas:
+                colisiones_aulas[clave_aula] = []
+            colisiones_aulas[clave_aula].append(i_sec)
+            
+            # 2. Colisión de Docente (Dura)
+            docente_id = seccion['docente_id']
+            clave_docente = (docente_id, i_horario)
+            if clave_docente not in colisiones_docentes:
+                colisiones_docentes[clave_docente] = []
+            colisiones_docentes[clave_docente].append(i_sec)
+            
+            # 3. Capacidad de Aula (Dura / Blanda)
+            factor_lab = 0.85 if seccion['laboratorio'] == 1 else 1.0
+            capacidad_efectiva = int(aula['capacidad_aula'] * factor_lab)
+            
+            if seccion['demanda'] > capacidad_efectiva:
+                sobrecupo = seccion['demanda'] - capacidad_efectiva
+                penalizacion += 500 + sobrecupo * 10
+                conflictos.append(f"Sección {seccion['seccion_id']} ({seccion['curso']}) excede cap. de {aula['aula_id']} ({seccion['demanda']}>{capacidad_efectiva})")
+            else:
+                desperdicio = capacidad_efectiva - seccion['demanda']
+                penalizacion += desperdicio * 1.5
+                
+            # 4. Compatibilidad de Laboratorios (Dura)
+            if seccion['laboratorio'] == 1 and aula['pabellon'] != 'C':
+                penalizacion += 400
+                conflictos.append(f"Sección {seccion['seccion_id']} ({seccion['curso']}) requiere Lab (Pabellón C), asignada en {aula['pabellon']}")
+                
+            # 5. Coincidencia de Turno (Blanda)
+            if horario['turno'].lower() != seccion['turno_preferido'].lower():
+                penalizacion += 100
+                
+        # Procesar colisiones
+        for clave, indices in colisiones_aulas.items():
+            if len(indices) > 1:
+                colisiones_en_aula = len(indices) - 1
+                penalizacion += colisiones_en_aula * 1000
+                aula_id = self.aulas[clave[0]]['aula_id']
+                horario_str = f"{self.horarios[clave[1]]['dia']} {self.horarios[clave[1]]['turno']}"
+                conflictos.append(f"Conflicto Aula: {len(indices)} secciones compitiendo por Aula {aula_id} en {horario_str}")
+                
+        for clave, indices in colisiones_docentes.items():
+            if len(indices) > 1:
+                colisiones_de_docente = len(indices) - 1
+                penalizacion += colisiones_de_docente * 1000
+                doc_id = clave[0]
+                horario_str = f"{self.horarios[clave[1]]['dia']} {self.horarios[clave[1]]['turno']}"
+                conflictos.append(f"Conflicto Docente: Docente ID {doc_id} asignado a {len(indices)} secciones en {horario_str}")
+                
+        fitness = 1.0 / (1.0 + penalizacion)
+        return fitness, conflictos
+
+    def inicializar_poblacion(self):
+        poblacion = []
+        for _ in range(self.tam_poblacion):
+            individuo = [random.randint(0, self.tam_espacio - 1) for _ in range(self.num_genes)]
+            poblacion.append(individuo)
+        return poblacion
+
+    def seleccion_torneo(self, poblacion, fitness_list, k=3):
+        seleccionados = []
+        for _ in range(len(poblacion)):
+            aspirantes = random.sample(list(zip(poblacion, fitness_list)), k)
+            ganador = max(aspirantes, key=lambda x: x[1])[0]
+            seleccionados.append(list(ganador))
+        return seleccionados
+
+    def cruzar(self, padre1, padre2):
+        if random.random() < self.tasa_cruce and self.num_genes > 1:
+            punto = random.randint(1, self.num_genes - 1)
+            hijo1 = padre1[:punto] + padre2[punto:]
+            hijo2 = padre2[:punto] + padre1[punto:]
+            return hijo1, hijo2
+        return list(padre1), list(padre2)
+
+    def mutar(self, individuo):
+        for i in range(self.num_genes):
+            if random.random() < self.tasa_mutacion:
+                individuo[i] = random.randint(0, self.tam_espacio - 1)
+        return individuo
+
+    def optimizar(self):
+        poblacion = self.inicializar_poblacion()
+        mejor_historico_fitness = -1.0
+        mejor_historico_cromosoma = None
+        mejor_historico_conflictos = []
+        
+        for gen_idx in range(self.generaciones):
+            fitness_conflictos = [self.calcular_fitness(ind) for ind in poblacion]
+            fitness_list = [fc[0] for fc in fitness_conflictos]
+            
+            mejor_idx = np.argmax(fitness_list)
+            mejor_fitness = fitness_list[mejor_idx]
+            mejor_cromosoma = poblacion[mejor_idx]
+            conflictos_mejor = fitness_conflictos[mejor_idx][1]
+            
+            if mejor_fitness > mejor_historico_fitness:
+                mejor_historico_fitness = mejor_fitness
+                mejor_historico_cromosoma = list(mejor_cromosoma)
+                mejor_historico_conflictos = conflictos_mejor
+                
+                self.mejor_cromosoma = mejor_historico_cromosoma
+                self.mejor_conflictos = mejor_historico_conflictos
+                
+            yield gen_idx, mejor_fitness, mejor_historico_fitness, mejor_historico_cromosoma, mejor_historico_conflictos
+            
+            padres = self.seleccion_torneo(poblacion, fitness_list)
+            
+            nueva_poblacion = []
+            # Elitismo: conservar los 2 mejores
+            indices_ordenados = np.argsort(fitness_list)[::-1]
+            nueva_poblacion.append(list(poblacion[indices_ordenados[0]]))
+            if len(poblacion) > 1:
+                nueva_poblacion.append(list(poblacion[indices_ordenados[1]]))
+                
+            while len(nueva_poblacion) < self.tam_poblacion:
+                p1 = random.choice(padres)
+                p2 = random.choice(padres)
+                h1, h2 = self.cruzar(p1, p2)
+                h1 = self.mutar(h1)
+                h2 = self.mutar(h2)
+                nueva_poblacion.append(h1)
+                if len(nueva_poblacion) < self.tam_poblacion:
+                    nueva_poblacion.append(h2)
+                    
+            poblacion = nueva_poblacion
+
+import random
+
+# ==============================
 # APLICACIÓN PRINCIPAL
 # ==============================
 class AppDemandaAulas:
@@ -210,7 +383,8 @@ class AppDemandaAulas:
         botones = [
             ("📊 Dashboard Resumen", self.vista_dashboard),
             ("📈 Análisis de Aforos", self.vista_analisis),
-            ("🤖 Simulación IA", self.vista_simulacion)
+            ("🤖 Simulación IA", self.vista_simulacion),
+            ("🗓 Horarios Distribuidos", self.vista_horarios_distribuidos)
         ]
 
         for texto, comando in botones:
@@ -1458,6 +1632,14 @@ class AppDemandaAulas:
 
             aulas_minimas = max(1, int(np.ceil(demanda_plan / capacidad_efectiva)))
             aulas_recomendadas = max(1, int(np.ceil(demanda_plan / capacidad_segura)))
+            
+            # Guardar variables de simulación para el algoritmo genético
+            self.sim_demanda_plan = demanda_plan
+            self.sim_aulas_recomendadas = aulas_recomendadas
+            self.sim_capacidad_efectiva = capacidad_efectiva
+            self.sim_laboratorio = laboratorio
+            self.sim_turno = turno
+            self.sim_pabellon = pabellon
             capacidad_total = aulas_recomendadas * capacidad_efectiva
             ocupacion_promedio = demanda_plan / capacidad_total
             cupos_libres = capacidad_total - demanda_plan
@@ -1655,6 +1837,574 @@ Recomendación:
 
         except Exception as e:
             messagebox.showerror("Error", f"Datos inválidos o incompletos.\n\nDetalle técnico: {e}")
+
+    # ==============================
+    # 4. VISTA: HORARIOS DISTRIBUIDOS (Algoritmo Genético)
+    # ==============================
+
+    # --- Clase interna: Motor del Algoritmo Genético ---
+    class _OptimizadorGenetico:
+        """Algoritmo Genético para optimizar la asignación de secciones a
+        combinaciones (aula, horario), minimizando colisiones y desperdicio
+        de aforo. Usa los resultados de Regresión Lineal (predicción de
+        demanda) y K-Means Clustering (clasificación de estado del aula)
+        como insumos para la función de aptitud (fitness).
+
+        Componentes obligatorios de la metaheurística:
+        • Población   – conjunto de cromosomas (soluciones candidatas)
+        • Fitness     – función de aptitud con penalizaciones duras y blandas
+        • Selección   – torneo de tamaño k=3
+        • Cruce       – single-point crossover con tasa configurable
+        • Mutación    – mutación uniforme por gen con tasa configurable
+        • Elitismo    – los 2 mejores pasan intactos a la siguiente generación
+        """
+
+        def __init__(self, aulas, horarios, secciones,
+                     tam_poblacion=80, generaciones=100,
+                     tasa_cruce=0.8, tasa_mutacion=0.10):
+            self.aulas = aulas
+            self.horarios = horarios
+            self.secciones = secciones
+            self.tam_poblacion = tam_poblacion
+            self.generaciones = generaciones
+            self.tasa_cruce = tasa_cruce
+            self.tasa_mutacion = tasa_mutacion
+
+            self.num_aulas = len(aulas)
+            self.num_horarios = len(horarios)
+            self.num_genes = len(secciones)
+
+            # Espacio de búsqueda: cada gen codifica un par (aula, horario)
+            self.espacio = []
+            for ia in range(self.num_aulas):
+                for ih in range(self.num_horarios):
+                    self.espacio.append((ia, ih))
+            self.tam_espacio = len(self.espacio)
+
+            self.mejor_cromosoma = None
+            self.mejor_conflictos = []
+
+        # --- Función de Aptitud (Fitness) ---------------------------------
+        def calcular_fitness(self, cromosoma):
+            """Evalúa un cromosoma. Retorna (fitness, lista_conflictos).
+            fitness = 1 / (1 + penalización_total)
+            """
+            pen = 0
+            conflictos = []
+            uso_aula = {}     # (i_aula, i_horario) -> [indices de sección]
+            uso_docente = {}  # (docente_id, i_horario) -> [indices de sección]
+
+            for i_sec, gen in enumerate(cromosoma):
+                ia, ih = self.espacio[gen]
+                aula = self.aulas[ia]
+                horario = self.horarios[ih]
+                sec = self.secciones[i_sec]
+
+                # Colisión de aula
+                clave_a = (ia, ih)
+                uso_aula.setdefault(clave_a, []).append(i_sec)
+
+                # Colisión de docente
+                clave_d = (sec['docente_id'], ih)
+                uso_docente.setdefault(clave_d, []).append(i_sec)
+
+                # Capacidad efectiva (laboratorio reduce 15%)
+                factor = 0.85 if sec['laboratorio'] == 1 else 1.0
+                cap_ef = int(aula['capacidad_aula'] * factor)
+
+                if sec['demanda'] > cap_ef:
+                    exceso = sec['demanda'] - cap_ef
+                    pen += 500 + exceso * 10
+                    conflictos.append(
+                        f"Secc {sec['sid']} ({sec['curso']}): "
+                        f"demanda {sec['demanda']} > cap {cap_ef} en Aula {aula['aula_id']}")
+                else:
+                    pen += (cap_ef - sec['demanda']) * 1.5  # desperdicio
+
+                # Laboratorio incompatible
+                if sec['laboratorio'] == 1 and aula.get('pabellon', '') != 'C':
+                    pen += 400
+                    conflictos.append(
+                        f"Secc {sec['sid']} ({sec['curso']}): requiere Lab (Pab C), "
+                        f"asignada en Pab {aula.get('pabellon', '?')}")
+
+                # Turno no preferido
+                if horario['turno'].lower() != sec.get('turno_pref', '').lower():
+                    pen += 100
+
+            # Penalizar colisiones
+            for clave, ids in uso_aula.items():
+                if len(ids) > 1:
+                    pen += (len(ids) - 1) * 1000
+                    a_id = self.aulas[clave[0]]['aula_id']
+                    h_str = f"{self.horarios[clave[1]]['dia']} {self.horarios[clave[1]]['turno']}"
+                    conflictos.append(
+                        f"Colisión aula: {len(ids)} secciones en Aula {a_id}, {h_str}")
+
+            for clave, ids in uso_docente.items():
+                if len(ids) > 1:
+                    pen += (len(ids) - 1) * 1000
+                    h_str = f"{self.horarios[clave[1]]['dia']} {self.horarios[clave[1]]['turno']}"
+                    conflictos.append(
+                        f"Colisión docente ID {clave[0]}: {len(ids)} secciones en {h_str}")
+
+            return 1.0 / (1.0 + pen), conflictos
+
+        # --- Inicialización de la Población -------------------------------
+        def inicializar_poblacion(self):
+            """Genera la población inicial de cromosomas aleatorios."""
+            return [[random.randint(0, self.tam_espacio - 1)
+                     for _ in range(self.num_genes)]
+                    for _ in range(self.tam_poblacion)]
+
+        # --- Selección por Torneo -----------------------------------------
+        def seleccion_torneo(self, poblacion, fitness_list, k=3):
+            """Selecciona individuos por torneo de tamaño k."""
+            sel = []
+            pool = list(zip(poblacion, fitness_list))
+            for _ in range(len(poblacion)):
+                aspirantes = random.sample(pool, min(k, len(pool)))
+                ganador = max(aspirantes, key=lambda x: x[1])[0]
+                sel.append(list(ganador))
+            return sel
+
+        # --- Cruce en un Punto (Single-Point Crossover) -------------------
+        def cruzar(self, p1, p2):
+            """Cruza dos padres. Retorna dos hijos."""
+            if random.random() < self.tasa_cruce and self.num_genes > 1:
+                pt = random.randint(1, self.num_genes - 1)
+                return p1[:pt] + p2[pt:], p2[:pt] + p1[pt:]
+            return list(p1), list(p2)
+
+        # --- Mutación Uniforme --------------------------------------------
+        def mutar(self, ind):
+            """Muta cada gen con probabilidad tasa_mutacion."""
+            for i in range(self.num_genes):
+                if random.random() < self.tasa_mutacion:
+                    ind[i] = random.randint(0, self.tam_espacio - 1)
+            return ind
+
+        # --- Bucle Evolutivo (generador) ----------------------------------
+        def optimizar(self):
+            """Generador que ejecuta el ciclo evolutivo completo.
+            Produce (gen, fitness_actual, mejor_fitness, mejor_cromosoma, conflictos)
+            en cada generación para actualizar la GUI sin bloquearla."""
+            pob = self.inicializar_poblacion()
+            mejor_f = -1.0
+            mejor_c = None
+            mejor_conf = []
+
+            for gen in range(self.generaciones):
+                evals = [self.calcular_fitness(ind) for ind in pob]
+                fits = [e[0] for e in evals]
+
+                idx_best = int(np.argmax(fits))
+                f_gen = fits[idx_best]
+
+                if f_gen > mejor_f:
+                    mejor_f = f_gen
+                    mejor_c = list(pob[idx_best])
+                    mejor_conf = evals[idx_best][1]
+                    self.mejor_cromosoma = mejor_c
+                    self.mejor_conflictos = mejor_conf
+
+                yield gen, f_gen, mejor_f, mejor_c, mejor_conf
+
+                # Siguiente generación
+                padres = self.seleccion_torneo(pob, fits)
+                nueva = []
+                orden = np.argsort(fits)[::-1]
+                nueva.append(list(pob[orden[0]]))  # elitismo 1
+                if len(pob) > 1:
+                    nueva.append(list(pob[orden[1]]))  # elitismo 2
+
+                while len(nueva) < self.tam_poblacion:
+                    pa = random.choice(padres)
+                    pb = random.choice(padres)
+                    h1, h2 = self.cruzar(pa, pb)
+                    nueva.append(self.mutar(h1))
+                    if len(nueva) < self.tam_poblacion:
+                        nueva.append(self.mutar(h2))
+                pob = nueva
+
+    # --- Vista del Dashboard: Horarios Distribuidos -----------------------
+    def vista_horarios_distribuidos(self):
+        """Construye la interfaz de la vista 'Horarios Distribuidos'.
+        Permite configurar hiperparámetros del AG, ejecutar la optimización
+        y visualizar la convergencia y la tabla de asignación resultante."""
+        self.limpiar_contenedor()
+
+        tk.Label(self.contenedor_principal,
+                 text="Horarios Distribuidos — Algoritmo Genético",
+                 font=FUENTE_TITULO, bg=GRIS_FONDO, fg=NEGRO
+                 ).pack(pady=15, anchor="w", padx=30)
+
+        tk.Label(self.contenedor_principal,
+                 text=("Optimización metaheurística que combina la predicción de "
+                       "demanda (Regresión Lineal) y la clasificación de eficiencia "
+                       "(K-Means Clustering) para distribuir secciones en aulas y horarios."),
+                 font=("Segoe UI", 10), bg=GRIS_FONDO, fg=GRIS_TEXTO,
+                 wraplength=900, justify="left"
+                 ).pack(anchor="w", padx=30, pady=(0, 10))
+
+        cuerpo = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        cuerpo.pack(fill="both", expand=True, padx=30, pady=5)
+        cuerpo.columnconfigure(0, weight=0, minsize=370)
+        cuerpo.columnconfigure(1, weight=1)
+        cuerpo.rowconfigure(0, weight=1)
+
+        # === PANEL IZQUIERDO: CONFIGURACIÓN ===
+        f_cfg = tk.LabelFrame(cuerpo, text="Configuración del AG",
+                              font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO,
+                              padx=15, pady=15)
+        f_cfg.grid(row=0, column=0, sticky="ns", padx=(0, 15))
+        f_cfg.columnconfigure(0, weight=1)
+        f_cfg.columnconfigure(1, weight=0)
+
+        row = 0
+        # Periodo
+        tk.Label(f_cfg, text="Periodo académico:", font=FUENTE_NORMAL,
+                 bg=BLANCO).grid(row=row, column=0, sticky="w", pady=4)
+        periodos = sorted(list(self.df["periodo"].dropna().unique()))
+        self._hd_periodo = ttk.Combobox(f_cfg, values=periodos,
+                                        state="readonly", width=14)
+        self._hd_periodo.set(periodos[-1] if periodos else "")
+        self._hd_periodo.grid(row=row, column=1, sticky="e", pady=4)
+        row += 1
+
+        # Pabellón
+        tk.Label(f_cfg, text="Pabellón:", font=FUENTE_NORMAL,
+                 bg=BLANCO).grid(row=row, column=0, sticky="w", pady=4)
+        pabs = sorted(list(self.df["pabellon"].dropna().unique()))
+        self._hd_pabellon = ttk.Combobox(f_cfg, values=pabs,
+                                         state="readonly", width=14)
+        self._hd_pabellon.set(pabs[0] if pabs else "A")
+        self._hd_pabellon.grid(row=row, column=1, sticky="e", pady=4)
+        row += 1
+
+        # Turno
+        tk.Label(f_cfg, text="Turno de referencia:", font=FUENTE_NORMAL,
+                 bg=BLANCO).grid(row=row, column=0, sticky="w", pady=4)
+        turnos_uniq = sorted([str(x) for x in self.df["horario_seccion"].dropna().unique()])
+        self._hd_turno = ttk.Combobox(f_cfg, values=turnos_uniq,
+                                      state="readonly", width=14)
+        self._hd_turno.set(turnos_uniq[0] if turnos_uniq else "Mañana")
+        self._hd_turno.grid(row=row, column=1, sticky="e", pady=4)
+        row += 1
+
+        # Población
+        tk.Label(f_cfg, text="Tamaño de población:", font=FUENTE_NORMAL,
+                 bg=BLANCO).grid(row=row, column=0, sticky="w", pady=4)
+        self._hd_pop = tk.IntVar(value=80)
+        tk.Spinbox(f_cfg, from_=20, to=300, textvariable=self._hd_pop,
+                   width=12, justify="center").grid(row=row, column=1,
+                                                    sticky="e", pady=4)
+        row += 1
+
+        # Generaciones
+        tk.Label(f_cfg, text="Generaciones:", font=FUENTE_NORMAL,
+                 bg=BLANCO).grid(row=row, column=0, sticky="w", pady=4)
+        self._hd_gen = tk.IntVar(value=100)
+        tk.Spinbox(f_cfg, from_=10, to=500, textvariable=self._hd_gen,
+                   width=12, justify="center").grid(row=row, column=1,
+                                                    sticky="e", pady=4)
+        row += 1
+
+        # Prob. mutación
+        tk.Label(f_cfg, text="Prob. de mutación:", font=FUENTE_NORMAL,
+                 bg=BLANCO).grid(row=row, column=0, sticky="w", pady=4)
+        self._hd_mut = tk.DoubleVar(value=0.10)
+        tk.Spinbox(f_cfg, from_=0.01, to=0.50, increment=0.01,
+                   textvariable=self._hd_mut, width=12,
+                   justify="center").grid(row=row, column=1,
+                                          sticky="e", pady=4)
+        row += 1
+
+        # Botón ejecutar
+        tk.Button(f_cfg, text="EJECUTAR OPTIMIZACIÓN",
+                  font=FUENTE_SUBTITULO, bg=ROJO_UTP, fg=BLANCO,
+                  activebackground=ROJO_CLARO, activeforeground=BLANCO,
+                  bd=0, pady=10, cursor="hand2",
+                  command=self._ejecutar_horarios_ag
+                  ).grid(row=row, column=0, columnspan=2,
+                         sticky="we", pady=(18, 10))
+        row += 1
+
+        # Panel de estadísticas
+        f_stats = tk.LabelFrame(f_cfg, text="Resultados del Proceso",
+                                font=("Segoe UI", 10, "bold"),
+                                bg=BLANCO, fg=NEGRO, padx=10, pady=10)
+        f_stats.grid(row=row, column=0, columnspan=2, sticky="we", pady=8)
+
+        self._hd_lbl_fit = tk.Label(f_stats, text="Mejor Fitness: ---",
+                                    font=FUENTE_NORMAL, bg=BLANCO, fg=GRIS_TEXTO)
+        self._hd_lbl_fit.pack(anchor="w")
+        self._hd_lbl_conf = tk.Label(f_stats, text="Conflictos: ---",
+                                     font=FUENTE_NORMAL, bg=BLANCO, fg=GRIS_TEXTO)
+        self._hd_lbl_conf.pack(anchor="w")
+        self._hd_lbl_time = tk.Label(f_stats, text="Tiempo: ---",
+                                     font=FUENTE_NORMAL, bg=BLANCO, fg=GRIS_TEXTO)
+        self._hd_lbl_time.pack(anchor="w")
+
+        # === PANEL DERECHO: GRÁFICO + TABLA ===
+        f_der = tk.Frame(cuerpo, bg=GRIS_FONDO)
+        f_der.grid(row=0, column=1, sticky="nsew")
+        f_der.rowconfigure(0, weight=1)
+        f_der.rowconfigure(1, weight=1)
+        f_der.columnconfigure(0, weight=1)
+
+        # Gráfico de convergencia
+        self._hd_panel_graf = tk.Frame(f_der, bg=BLANCO, bd=1, relief="solid")
+        self._hd_panel_graf.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
+
+        # Tabla de asignación
+        self._hd_panel_tabla = tk.Frame(f_der, bg=BLANCO, bd=1, relief="solid")
+        self._hd_panel_tabla.grid(row=1, column=0, sticky="nsew")
+
+        tk.Label(self._hd_panel_tabla,
+                 text="Distribución Óptima de Horarios y Aulas",
+                 font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO
+                 ).pack(anchor="w", padx=15, pady=(10, 5))
+
+        cols = ("seccion", "curso", "docente", "aula",
+                "capacidad", "horario", "ocupacion", "estado")
+        self._hd_tree = ttk.Treeview(self._hd_panel_tabla,
+                                     columns=cols, show="headings", height=9)
+        headers = {"seccion": "Sección", "curso": "Curso",
+                   "docente": "Docente", "aula": "Aula",
+                   "capacidad": "Capacidad", "horario": "Día / Turno",
+                   "ocupacion": "Ocupación", "estado": "Estado"}
+        for c in cols:
+            self._hd_tree.heading(c, text=headers[c])
+            self._hd_tree.column(c, anchor="center", stretch=True)
+
+        sb = ttk.Scrollbar(self._hd_panel_tabla, orient="vertical",
+                           command=self._hd_tree.yview)
+        self._hd_tree.configure(yscrollcommand=sb.set)
+        self._hd_tree.pack(side="left", fill="both", expand=True,
+                           padx=(15, 0), pady=(5, 10))
+        sb.pack(side="right", fill="y", padx=(0, 15), pady=(5, 10))
+
+        self._hd_fig = None
+        self._hd_render_vacio()
+
+    # --- Gráfico vacío inicial ---
+    def _hd_render_vacio(self):
+        for w in self._hd_panel_graf.winfo_children():
+            w.destroy()
+        if self._hd_fig is not None:
+            plt.close(self._hd_fig)
+
+        self._hd_fig, ax = plt.subplots(figsize=(8, 2.6))
+        self._hd_fig.patch.set_facecolor(BLANCO)
+        ax.set_facecolor("#F9F9F9")
+        ax.set_title("Convergencia del Algoritmo Genético", fontsize=12)
+        ax.set_xlabel("Generación", fontsize=10)
+        ax.set_ylabel("Fitness (Aptitud)", fontsize=10)
+        ax.grid(True, linestyle="--", alpha=0.5)
+        plt.tight_layout()
+        canvas = FigureCanvasTkAgg(self._hd_fig, master=self._hd_panel_graf)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    # --- Preparar secciones usando Regresión + Clustering -----------------
+    def _hd_preparar_secciones(self, periodo, pabellon, turno):
+        """Genera la lista de secciones para el AG combinando:
+        1) Predicción de demanda por Regresión Lineal (modelo entrenado)
+        2) Clasificación de eficiencia por K-Means (cluster del análisis)
+        """
+        # Filtrar datos históricos
+        mask = (self.df["periodo"] == periodo) & (self.df["pabellon"] == pabellon)
+        df_filt = self.df[mask].copy()
+
+        # Si no hay datos para este filtro, usar cualquier periodo disponible
+        if df_filt.empty:
+            df_filt = self.df[self.df["pabellon"] == pabellon].copy()
+        if df_filt.empty:
+            df_filt = self.df.copy()
+
+        df_filt = df_filt.head(15)  # Limitar para rendimiento
+
+        secciones = []
+        modelo_reg = self.modelos["Regresión Lineal Múltiple"]["modelo"]
+
+        for idx, row in df_filt.iterrows():
+            # --- Regresión: predecir demanda ---
+            X_pred = pd.DataFrame([{
+                "alumnos_nuevos": int(row["alumnos_nuevos"]),
+                "alumnos_prerrequisito": int(row["alumnos_prerrequisito"]),
+                "alumnos_repitentes": int(row["alumnos_repitentes"]),
+                "docente_disponible": int(row["docente_disponible"]),
+                "capacidad_aula": int(row["capacidad_aula"]),
+                "duracion_semanas": int(row["duracion_semanas"]),
+                "laboratorio": int(row["laboratorio"])
+            }])
+            demanda_pred = max(1, int(round(float(modelo_reg.predict(X_pred)[0]))))
+
+            # --- Clustering: clasificar estado de eficiencia ---
+            X_cluster = np.array([[demanda_pred, int(row["capacidad_aula"])]])
+            km_temp = KMeans(n_clusters=3, n_init=10, random_state=42)
+            # Entrenar con los datos globales para tener centroides coherentes
+            datos_globales = self.df[["alumnos_matriculados", "capacidad_aula"]].values
+            km_temp.fit(datos_globales)
+            cluster_id = int(km_temp.predict(X_cluster)[0])
+
+            # Mapear cluster a etiqueta
+            centroides = km_temp.cluster_centers_
+            ratios = [c[0] / c[1] if c[1] > 0 else 0 for c in centroides]
+            orden = sorted(range(3), key=lambda i: ratios[i])
+            roles = {orden[0]: "Sub", orden[1]: "Óptimo", orden[2]: "Sobre"}
+            etiqueta_cluster = roles.get(cluster_id, "Óptimo")
+
+            secciones.append({
+                "sid": f"S-{row['id_curso']}-{idx}",
+                "curso": row["nombre_curso"],
+                "docente_id": int(row["docente_id"]),
+                "demanda": demanda_pred,
+                "laboratorio": int(row["laboratorio"]),
+                "turno_pref": turno,
+                "cluster": etiqueta_cluster
+            })
+
+        return secciones
+
+    # --- Ejecutar el Algoritmo Genético -----------------------------------
+    def _ejecutar_horarios_ag(self):
+        periodo = self._hd_periodo.get()
+        pabellon = self._hd_pabellon.get()
+        turno = self._hd_turno.get()
+
+        # Aulas disponibles
+        aulas_df = (self.df[self.df["pabellon"] == pabellon]
+                    [["aula_id", "capacidad_aula", "pabellon"]]
+                    .drop_duplicates())
+        aulas = aulas_df.to_dict('records')
+        if not aulas:
+            aulas = [{"aula_id": 100 + i, "capacidad_aula": 40,
+                      "pabellon": pabellon} for i in range(8)]
+
+        # Horarios (15 slots: L-V × 3 turnos)
+        dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+        turnos_dia = ["Mañana", "Tarde", "Noche"]
+        horarios = [{"dia": d, "turno": t} for d in dias for t in turnos_dia]
+
+        # Secciones (con predicción IA + clustering)
+        secciones = self._hd_preparar_secciones(periodo, pabellon, turno)
+        if not secciones:
+            messagebox.showwarning("Sin datos",
+                                   "No se encontraron secciones para el filtro seleccionado.")
+            return
+
+        # Instanciar AG
+        ag = self._OptimizadorGenetico(
+            aulas=aulas,
+            horarios=horarios,
+            secciones=secciones,
+            tam_poblacion=self._hd_pop.get(),
+            generaciones=self._hd_gen.get(),
+            tasa_mutacion=self._hd_mut.get()
+        )
+
+        gen_x, fit_y, best_y = [], [], []
+        t0 = time.time()
+        generador = ag.optimizar()
+        n_gen = self._hd_gen.get()
+
+        def paso():
+            try:
+                g, f_act, f_best, _, confs = next(generador)
+                gen_x.append(g)
+                fit_y.append(f_act)
+                best_y.append(f_best)
+
+                self._hd_lbl_fit.config(
+                    text=f"Mejor Fitness: {f_best:.6f}  (Gen {g + 1})",
+                    fg=COLOR_OPTIMO if f_best > 0.002 else ROJO_UTP)
+                self._hd_lbl_conf.config(
+                    text=f"Conflictos: {len(confs)}",
+                    fg=ROJO_UTP if confs else COLOR_OPTIMO)
+                self._hd_lbl_time.config(
+                    text=f"Tiempo: {time.time() - t0:.2f} s")
+
+                if g % 5 == 0 or g == n_gen - 1:
+                    self._hd_render_curva(gen_x, fit_y, best_y)
+
+                self.root.after(5, paso)
+            except StopIteration:
+                self._hd_finalizar(ag, gen_x, fit_y, best_y, t0)
+
+        paso()
+
+    # --- Actualizar gráfico de convergencia --------------------------------
+    def _hd_render_curva(self, gx, fy, by):
+        for w in self._hd_panel_graf.winfo_children():
+            w.destroy()
+        if self._hd_fig is not None:
+            plt.close(self._hd_fig)
+
+        self._hd_fig, ax = plt.subplots(figsize=(8, 2.6))
+        self._hd_fig.patch.set_facecolor(BLANCO)
+        ax.set_facecolor("#F9F9F9")
+        ax.plot(gx, fy, label="Fitness Generación", color=ROJO_CLARO, alpha=0.55)
+        ax.plot(gx, by, label="Mejor Histórico", color=COLOR_OPTIMO, linewidth=2)
+        ax.set_title("Convergencia del Algoritmo Genético", fontsize=11, pad=8)
+        ax.set_xlabel("Generación", fontsize=9)
+        ax.set_ylabel("Fitness", fontsize=9)
+        ax.legend(loc="lower right", fontsize=8)
+        ax.grid(True, linestyle="--", alpha=0.4)
+        plt.tight_layout()
+        canvas = FigureCanvasTkAgg(self._hd_fig, master=self._hd_panel_graf)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    # --- Mostrar tabla de resultados y mensaje final ----------------------
+    def _hd_finalizar(self, ag, gx, fy, by, t0):
+        self._hd_render_curva(gx, fy, by)
+        cromosoma = ag.mejor_cromosoma
+        if cromosoma is None:
+            return
+
+        for item in self._hd_tree.get_children():
+            self._hd_tree.delete(item)
+
+        _, conflictos = ag.calcular_fitness(cromosoma)
+
+        for i_sec, gen in enumerate(cromosoma):
+            ia, ih = ag.espacio[gen]
+            aula = ag.aulas[ia]
+            hor = ag.horarios[ih]
+            sec = ag.secciones[i_sec]
+
+            flab = 0.85 if sec['laboratorio'] == 1 else 1.0
+            cap_ef = int(aula['capacidad_aula'] * flab)
+            ratio = sec['demanda'] / cap_ef
+            estado, _ = self._clasificar_ocupacion(ratio)
+
+            self._hd_tree.insert("", "end", values=(
+                sec["sid"],
+                sec["curso"],
+                sec["docente_id"],
+                f"Aula {aula['aula_id']} ({aula.get('pabellon', '')})",
+                cap_ef,
+                f"{hor['dia']} ({hor['turno']})",
+                f"{ratio * 100:.1f}%",
+                f"{estado}  [{sec.get('cluster', '')}]"
+            ))
+
+        dt = time.time() - t0
+        if not conflictos:
+            messagebox.showinfo(
+                "Optimización Completada",
+                f"Distribución optimizada sin conflictos.\n\n"
+                f"Generaciones: {len(gx)}\n"
+                f"Tiempo: {dt:.2f} s\n"
+                f"Fitness óptimo: {by[-1]:.6f}")
+        else:
+            messagebox.showwarning(
+                "Optimización con Advertencias",
+                f"Quedan {len(conflictos)} conflicto(s) tras {len(gx)} generaciones.\n\n"
+                + "\n".join(conflictos[:4])
+                + "\n\nSugerencia: aumente la población o las generaciones.")
 
 
 # ==============================
