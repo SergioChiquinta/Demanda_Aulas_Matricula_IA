@@ -1,6 +1,8 @@
 import pandas as pd
 import mysql.connector
 import numpy as np
+import random
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 import matplotlib.pyplot as plt
@@ -83,6 +85,13 @@ COLUMNAS_NUMERICAS = [
     "laboratorio",
     "tiempo_matricula_min",
     "alumnos_matriculados",
+]
+
+COLUMNAS_FEATURES_GA = [
+    "ciclo_relativo", "creditos_curso", "docente_disponible", "capacidad_aula",
+    "alumnos_nuevos", "alumnos_prerrequisito", "alumnos_repitentes", "veces_llevado",
+    "carga_academica_proyectada", "cursos_comun", "duracion_semanas", "laboratorio",
+    "tiempo_matricula_min",
 ]
 
 # ==============================
@@ -173,6 +182,184 @@ def entrenar_modelos(X, y):
     return resultados
 
 # ==============================
+# ALGORITMOS GENÉTICOS
+# ==============================
+
+def ga_seleccion_variables(df, pop_size=20, n_gen=30, mutation_rate=0.15):
+    """GA #1 — Selecciona el subconjunto de COLUMNAS_FEATURES_GA que minimiza MAE (Ridge, split 80/20)."""
+    candidatas = [c for c in COLUMNAS_FEATURES_GA if c in df.columns]
+    n = len(candidatas)
+    y = df["alumnos_matriculados"].values
+    X_all = df[candidatas].values
+    X_tr, X_te, y_tr, y_te = train_test_split(X_all, y, test_size=0.2, random_state=42)
+
+    def fitness(ind):
+        idx = [i for i in range(n) if ind[i]]
+        if not idx:
+            return -1e9
+        pred = Ridge(alpha=1.0).fit(X_tr[:, idx], y_tr).predict(X_te[:, idx])
+        return -mean_absolute_error(y_te, pred)
+
+    pop = [list(np.random.randint(0, 2, n)) for _ in range(pop_size)]
+    best_ind, best_score = pop[0][:], fitness(pop[0])
+
+    for _ in range(n_gen):
+        scores = [fitness(ind) for ind in pop]
+        gen_best = max(range(pop_size), key=lambda i: scores[i])
+        if scores[gen_best] > best_score:
+            best_score, best_ind = scores[gen_best], pop[gen_best][:]
+        sorted_p = sorted(range(pop_size), key=lambda i: scores[i], reverse=True)
+        new_pop = [pop[sorted_p[0]][:], pop[sorted_p[1]][:]]
+        while len(new_pop) < pop_size:
+            t1 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            t2 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            pt = random.randint(1, n - 1)
+            child = pop[t1][:pt] + pop[t2][pt:]
+            for i in range(n):
+                if random.random() < mutation_rate:
+                    child[i] = 1 - child[i]
+            if sum(child) == 0:
+                child[random.randint(0, n - 1)] = 1
+            new_pop.append(child)
+        pop = new_pop
+
+    seleccionadas = [candidatas[i] for i in range(n) if best_ind[i]]
+    return seleccionadas, -best_score
+
+
+def ga_optimizar_secciones(demanda_plan, capacidad_efectiva, docentes_disponibles,
+                            pop_size=30, n_gen=50):
+    """GA #2 — Optimiza (n_secciones, factor_ocupacion) para distribución de aulas.
+    Cromosoma: [n_sec ∈ 1-10, factor*100 ∈ 60-100]. Penaliza déficit docente y hacinamiento."""
+    if demanda_plan <= 0 or capacidad_efectiva <= 0:
+        return {"n_secciones": 1, "factor_ocupacion": 0.90,
+                "cap_segura": capacidad_efectiva, "total_cupos": capacidad_efectiva,
+                "ocupacion": 0.0, "fitness": 0.0}
+
+    def decode(ind):
+        n_sec = max(1, min(10, ind[0]))
+        factor = max(0.60, min(1.00, ind[1] / 100.0))
+        cap_seg = max(1, int(np.floor(capacidad_efectiva * factor)))
+        total = n_sec * capacidad_efectiva
+        ocup = demanda_plan / total if total > 0 else 2.0
+        return n_sec, factor, cap_seg, total, ocup
+
+    def fitness(ind):
+        n_sec, _, _, _, ocup = decode(ind)
+        s = 200.0 if 0.65 <= ocup <= 0.90 else (80.0 if 0.50 <= ocup < 0.65 else 0.0)
+        s -= max(0.0, ocup - 1.0) * 1200
+        s -= max(0.0, ocup - 0.90) * 400
+        s -= max(0.0, 0.45 - ocup) * 500
+        if docentes_disponibles > 0:
+            s -= max(0, n_sec - docentes_disponibles) * 600
+        s -= abs(ocup - 0.75) * 80
+        return s
+
+    pop = [[random.randint(1, 8), random.randint(70, 100)] for _ in range(pop_size)]
+    best_ind, best_score = pop[0][:], fitness(pop[0])
+
+    for _ in range(n_gen):
+        scores = [fitness(ind) for ind in pop]
+        gen_best = max(range(pop_size), key=lambda i: scores[i])
+        if scores[gen_best] > best_score:
+            best_score, best_ind = scores[gen_best], pop[gen_best][:]
+        sorted_p = sorted(range(pop_size), key=lambda i: scores[i], reverse=True)
+        new_pop = [pop[sorted_p[0]][:], pop[sorted_p[1]][:]]
+        while len(new_pop) < pop_size:
+            t1 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            t2 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            child = [pop[t1][0] if random.random() < 0.5 else pop[t2][0],
+                     pop[t1][1] if random.random() < 0.5 else pop[t2][1]]
+            if random.random() < 0.25:
+                child[0] = max(1, min(10, child[0] + random.randint(-1, 1)))
+            if random.random() < 0.25:
+                child[1] = max(60, min(100, child[1] + random.randint(-5, 5)))
+            new_pop.append(child)
+        pop = new_pop
+
+    n_sec, factor, cap_seg, total, ocup = decode(best_ind)
+    return {"n_secciones": n_sec, "factor_ocupacion": factor,
+            "cap_segura": cap_seg, "total_cupos": total,
+            "ocupacion": ocup, "fitness": best_score}
+
+
+def ga_horarios(df, pop_size=40, n_gen=60, mutation_rate=0.05):
+    """GA #3 — Timetabling: asigna top-30 cursos a (aula, turno) minimizando conflictos y hacinamiento.
+    Cromosoma: [aula_idx * n_cursos, turno_idx * n_cursos]. Devuelve (resumen, aulas, turnos, asignaciones, score)."""
+    resumen = (
+        df.groupby("nombre_curso", as_index=False)
+        .agg(demanda=("alumnos_matriculados", "mean"),
+             laboratorio=("laboratorio", "max"),
+             docente_id=("docente_id", "first"))
+        .sort_values("demanda", ascending=False)
+        .head(30)
+        .reset_index(drop=True)
+    )
+    resumen["demanda"] = resumen["demanda"].round().astype(int)
+
+    aulas = (
+        df[["aula_id", "capacidad_aula", "pabellon"]]
+        .drop_duplicates("aula_id")
+        .reset_index(drop=True)
+    )
+    turnos = sorted(df["horario_seccion"].dropna().unique().tolist())
+
+    n_c, n_a, n_t = len(resumen), len(aulas), len(turnos)
+    if n_a == 0 or n_t == 0 or n_c == 0:
+        return resumen, aulas, turnos, [], 0.0
+
+    caps = aulas["capacidad_aula"].values
+    docs = resumen["docente_id"].values
+    dems = resumen["demanda"].values
+
+    def fitness(ind):
+        a_idx, t_idx = ind[:n_c], ind[n_c:]
+        s = 0.0
+        for i in range(n_c):
+            for j in range(i + 1, n_c):
+                if a_idx[i] == a_idx[j] and t_idx[i] == t_idx[j]:
+                    s -= 800
+                if docs[i] == docs[j] and t_idx[i] == t_idx[j]:
+                    s -= 500
+        for i in range(n_c):
+            ocup = dems[i] / caps[a_idx[i]] if caps[a_idx[i]] > 0 else 2.0
+            if ocup > 1.0:
+                s -= (ocup - 1.0) * 600
+            elif 0.65 <= ocup <= 0.90:
+                s += 100
+            elif ocup < 0.40:
+                s -= (0.40 - ocup) * 150
+        return s
+
+    gene_len = 2 * n_c
+    pop = [list(np.random.randint(0, n_a, n_c)) + list(np.random.randint(0, n_t, n_c))
+           for _ in range(pop_size)]
+    best_ind, best_score = pop[0][:], fitness(pop[0])
+
+    for _ in range(n_gen):
+        scores = [fitness(ind) for ind in pop]
+        gen_best = max(range(pop_size), key=lambda i: scores[i])
+        if scores[gen_best] > best_score:
+            best_score, best_ind = scores[gen_best], pop[gen_best][:]
+        sorted_p = sorted(range(pop_size), key=lambda i: scores[i], reverse=True)
+        new_pop = [pop[sorted_p[0]][:], pop[sorted_p[1]][:]]
+        while len(new_pop) < pop_size:
+            t1 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            t2 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            pt = random.randint(1, gene_len - 1)
+            child = pop[t1][:pt] + pop[t2][pt:]
+            for k in range(gene_len):
+                if random.random() < mutation_rate:
+                    child[k] = (random.randint(0, n_a - 1) if k < n_c
+                                else random.randint(0, n_t - 1))
+            new_pop.append(child)
+        pop = new_pop
+
+    a_asig, t_asig = best_ind[:n_c], best_ind[n_c:]
+    return resumen, aulas, turnos, list(zip(a_asig, t_asig)), best_score
+
+
+# ==============================
 # APLICACIÓN PRINCIPAL
 # ==============================
 class AppDemandaAulas:
@@ -189,6 +376,8 @@ class AppDemandaAulas:
         self.X, self.y = preparar_datos(self.df)
         self.modelos = entrenar_modelos(self.X, self.y)
         self.modelo_activo = self.modelos["Regresión Lineal Múltiple"]["modelo"]
+        self.ga_features_resultado = None
+        self.ga_mae_resultado = None
 
         self.crear_menu_lateral()
         self.contenedor_principal = tk.Frame(self.root, bg=GRIS_FONDO)
@@ -210,7 +399,10 @@ class AppDemandaAulas:
         botones = [
             ("📊 Dashboard Resumen", self.vista_dashboard),
             ("📈 Análisis de Aforos", self.vista_analisis),
-            ("🤖 Simulación IA", self.vista_simulacion)
+            ("🤖 Simulación IA", self.vista_simulacion),
+            ("🧬 AG-1 Variables", self.vista_ga1_variables),
+            ("🧬 AG-2 Secciones", self.vista_ga2_secciones),
+            ("🧬 AG-3 Horarios", self.vista_optimizador_horarios),
         ]
 
         for texto, comando in botones:
@@ -1655,6 +1847,406 @@ Recomendación:
 
         except Exception as e:
             messagebox.showerror("Error", f"Datos inválidos o incompletos.\n\nDetalle técnico: {e}")
+
+
+    # ==============================
+    # GA #1 — VISTA DEDICADA
+    # ==============================
+    def vista_ga1_variables(self):
+        self.limpiar_contenedor()
+
+        header = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        header.pack(fill="x", pady=(18, 5), padx=28)
+
+        tk.Label(header, text="AG #1 — Selección Óptima de Variables Predictoras",
+                 font=("Segoe UI", 22, "bold"), bg=GRIS_FONDO, fg=NEGRO).pack(side="left")
+
+        self.btn_ga1 = tk.Button(
+            header, text="Ejecutar AG #1 🧬",
+            font=FUENTE_NORMAL, bg=ROJO_UTP, fg=BLANCO,
+            activebackground=ROJO_CLARO, activeforeground=BLANCO,
+            bd=0, padx=14, pady=8, cursor="hand2",
+            command=self._ejecutar_ga1
+        )
+        self.btn_ga1.pack(side="right")
+
+        mae_base = self.modelos["Regresión Lineal Múltiple"]["MAE"]
+        n_cand = len([c for c in COLUMNAS_FEATURES_GA if c in self.df.columns])
+
+        tk.Label(
+            self.contenedor_principal,
+            text=(f"Busca el subconjunto óptimo de {n_cand} variables candidatas que minimiza el MAE "
+                  f"del modelo Ridge (split 80/20). MAE base del modelo actual: ±{mae_base:.2f} alumnos."),
+            font=("Segoe UI", 10), bg=GRIS_FONDO, fg=GRIS_TEXTO, wraplength=1200, justify="left"
+        ).pack(anchor="w", padx=30, pady=(0, 4))
+
+        self.lbl_ga1_estado = tk.Label(
+            self.contenedor_principal,
+            text="Estado: No ejecutado — presiona 'Ejecutar AG #1 🧬' para iniciar.",
+            font=("Segoe UI", 10, "italic"), bg=GRIS_FONDO, fg=GRIS_TEXTO
+        )
+        self.lbl_ga1_estado.pack(anchor="w", padx=30, pady=(0, 12))
+
+        # Panel de candidatas y resultado
+        cuerpo = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        cuerpo.pack(fill="both", expand=True, padx=28, pady=(0, 18))
+        cuerpo.columnconfigure(0, weight=1)
+        cuerpo.columnconfigure(1, weight=1)
+        cuerpo.rowconfigure(0, weight=1)
+
+        # Izquierda: variables candidatas
+        f_cand = tk.LabelFrame(cuerpo, text="Variables Candidatas (cromosoma)",
+                               font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO, padx=10, pady=10)
+        f_cand.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+
+        for col in COLUMNAS_FEATURES_GA:
+            presente = col in self.df.columns
+            color = NEGRO if presente else "#BDBDBD"
+            tk.Label(f_cand, text=f"{'●' if presente else '○'}  {col}",
+                     font=("Segoe UI", 10), bg=BLANCO, fg=color,
+                     anchor="w").pack(fill="x", pady=1)
+
+        # Derecha: resultado
+        f_res = tk.LabelFrame(cuerpo, text="Resultado del AG",
+                              font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO, padx=10, pady=10)
+        f_res.grid(row=0, column=1, sticky="nsew")
+
+        if self.ga_features_resultado:
+            mejora = mae_base - self.ga_mae_resultado
+            signo = "↓" if mejora >= 0 else "↑"
+            color_r = COLOR_OPTIMO if mejora >= 0 else COLOR_SOBREPOBLADO
+            tk.Label(f_res, text="Variables seleccionadas por el AG:",
+                     font=("Segoe UI", 11, "bold"), bg=BLANCO, fg=NEGRO).pack(anchor="w", pady=(0, 4))
+            for feat in self.ga_features_resultado:
+                tk.Label(f_res, text=f"  ✔  {feat}",
+                         font=("Segoe UI", 10), bg=BLANCO, fg=COLOR_OPTIMO).pack(anchor="w")
+            tk.Label(f_res,
+                     text=f"\nMAE AG: ±{self.ga_mae_resultado:.2f}  vs  MAE base: ±{mae_base:.2f}",
+                     font=("Segoe UI", 12, "bold"), bg=BLANCO, fg=color_r).pack(anchor="w", pady=(10, 2))
+            tk.Label(f_res,
+                     text=f"Cambio: {signo}{abs(mejora):.2f} alumnos",
+                     font=("Segoe UI", 11), bg=BLANCO, fg=color_r).pack(anchor="w")
+        else:
+            tk.Label(f_res,
+                     text="Ejecuta el AG para ver qué variables\nselecciona el algoritmo genético.",
+                     font=("Segoe UI", 11, "italic"), bg=BLANCO, fg=GRIS_TEXTO,
+                     justify="left").pack(anchor="w", pady=20)
+
+    # ==============================
+    # GA #1 — LÓGICA DE UI
+    # ==============================
+    def _ejecutar_ga1(self):
+        try:
+            self.btn_ga1.config(state="disabled")
+            self.lbl_ga1_estado.config(
+                text="⚙️ Ejecutando AG... buscando subconjunto óptimo de variables.",
+                fg="#B8860B"
+            )
+            self.root.update_idletasks()
+        except tk.TclError:
+            return
+
+        def _run():
+            features, mae = ga_seleccion_variables(self.df)
+            mae_base = self.modelos["Regresión Lineal Múltiple"]["MAE"]
+            self.ga_features_resultado = features
+            self.ga_mae_resultado = mae
+            self.root.after(0, lambda: self._actualizar_ga1_ui(features, mae, mae_base))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _actualizar_ga1_ui(self, features, mae_ga, mae_base):
+        try:
+            self.btn_ga1.config(state="normal")
+            mejora = mae_base - mae_ga
+            signo = "↓" if mejora >= 0 else "↑"
+            color = COLOR_OPTIMO if mejora >= 0 else "#B8860B"
+            self.lbl_ga1_estado.config(
+                text=(f"✔ Completado — {len(features)} variables seleccionadas | "
+                      f"MAE AG: ±{mae_ga:.2f}  vs  MAE base: ±{mae_base:.2f}  →  "
+                      f"Cambio: {signo}{abs(mejora):.2f} alumnos"),
+                fg=color
+            )
+            # Refresca el panel de resultados recargando la vista
+            self.vista_ga1_variables()
+        except tk.TclError:
+            pass
+
+    # ==============================
+    # GA #2 — VISTA DEDICADA
+    # ==============================
+    def vista_ga2_secciones(self):
+        self.limpiar_contenedor()
+
+        header = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        header.pack(fill="x", pady=(18, 5), padx=28)
+
+        tk.Label(header, text="AG #2 — Optimización de Distribución de Secciones",
+                 font=("Segoe UI", 22, "bold"), bg=GRIS_FONDO, fg=NEGRO).pack(side="left")
+
+        self.btn_ga2 = tk.Button(
+            header, text="Ejecutar AG #2 🧬",
+            font=FUENTE_NORMAL, bg=ROJO_UTP, fg=BLANCO,
+            activebackground=ROJO_CLARO, activeforeground=BLANCO,
+            bd=0, padx=14, pady=8, cursor="hand2",
+            command=self._ejecutar_ga2
+        )
+        self.btn_ga2.pack(side="right")
+
+        tk.Label(
+            self.contenedor_principal,
+            text="Optimiza el número de secciones y el factor de ocupación para minimizar hacinamiento y subutilización.",
+            font=("Segoe UI", 10), bg=GRIS_FONDO, fg=GRIS_TEXTO
+        ).pack(anchor="w", padx=30, pady=(0, 10))
+
+        cuerpo = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        cuerpo.pack(fill="both", expand=True, padx=28, pady=(0, 18))
+        cuerpo.columnconfigure(0, weight=0, minsize=380)
+        cuerpo.columnconfigure(1, weight=1)
+        cuerpo.rowconfigure(0, weight=1)
+
+        # Izquierda: formulario de parámetros
+        f_form = tk.LabelFrame(cuerpo, text="Parámetros de entrada",
+                               font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO, padx=14, pady=14)
+        f_form.grid(row=0, column=0, sticky="ns", padx=(0, 16))
+
+        cap_base = int(round(float(self.df["capacidad_aula"].median()))) if "capacidad_aula" in self.df.columns else 40
+        self.ga2_vars = {
+            "demanda":    tk.IntVar(value=60),
+            "capacidad":  tk.IntVar(value=cap_base),
+            "docentes":   tk.IntVar(value=3),
+            "laboratorio": tk.IntVar(value=0),
+        }
+
+        campos = [
+            ("Demanda total a distribuir", "demanda",    1, 300),
+            ("Capacidad por aula",         "capacidad",  1, 120),
+            ("Docentes disponibles",       "docentes",   0,  20),
+        ]
+        for fila, (label, key, mn, mx) in enumerate(campos):
+            tk.Label(f_form, text=label, font=FUENTE_NORMAL, bg=BLANCO, fg=NEGRO
+                     ).grid(row=fila * 2, column=0, sticky="w", pady=(8, 0))
+            tk.Spinbox(f_form, from_=mn, to=mx, textvariable=self.ga2_vars[key],
+                       width=7, font=("Segoe UI", 10), justify="center"
+                       ).grid(row=fila * 2, column=1, sticky="e", pady=(8, 0))
+
+        tk.Label(f_form, text="Requiere laboratorio", font=FUENTE_NORMAL,
+                 bg=BLANCO, fg=NEGRO).grid(row=6, column=0, sticky="w", pady=(12, 0))
+        tk.Checkbutton(f_form, text="Sí (−15% capacidad)", variable=self.ga2_vars["laboratorio"],
+                       bg=BLANCO, fg=GRIS_TEXTO, font=("Segoe UI", 9)
+                       ).grid(row=6, column=1, sticky="e", pady=(12, 0))
+
+        # Derecha: resultados
+        f_res = tk.LabelFrame(cuerpo, text="Resultado del AG",
+                              font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO, padx=14, pady=14)
+        f_res.grid(row=0, column=1, sticky="nsew")
+
+        self.lbl_ga2_estado = tk.Label(
+            f_res,
+            text="Ejecuta el AG para ver la distribución óptima de secciones.",
+            font=("Segoe UI", 11, "italic"), bg=BLANCO, fg=GRIS_TEXTO,
+            wraplength=600, justify="left"
+        )
+        self.lbl_ga2_estado.pack(anchor="w", pady=(0, 10))
+
+        # KPIs resultado
+        self.frame_ga2_kpis = tk.Frame(f_res, bg=BLANCO)
+        self.frame_ga2_kpis.pack(fill="x", pady=(0, 12))
+
+        self.ga2_kpi_labels = {}
+        kpi_defs = [
+            ("Secciones (AG)",     "ag_sec"),
+            ("Secciones (Clásico)","cl_sec"),
+            ("Ocupación AG",       "ag_ocup"),
+            ("Total cupos AG",     "ag_cupos"),
+        ]
+        for idx, (titulo, clave) in enumerate(kpi_defs):
+            card = tk.Frame(self.frame_ga2_kpis, bg=BLANCO, bd=1, relief="solid", height=80)
+            card.grid(row=idx // 2, column=idx % 2, sticky="nsew", padx=5, pady=5)
+            card.grid_propagate(False)
+            self.frame_ga2_kpis.columnconfigure(idx % 2, weight=1)
+            tk.Label(card, text=titulo, font=("Segoe UI", 9), bg=BLANCO,
+                     fg=GRIS_TEXTO).pack(pady=(8, 1))
+            lbl = tk.Label(card, text="---", font=("Segoe UI", 17, "bold"),
+                           bg=BLANCO, fg=ROJO_UTP)
+            lbl.pack()
+            self.ga2_kpi_labels[clave] = lbl
+
+        self.lbl_ga2_detalle = tk.Label(
+            f_res, text="",
+            font=("Segoe UI", 10), bg=BLANCO, fg=GRIS_TEXTO,
+            wraplength=600, justify="left"
+        )
+        self.lbl_ga2_detalle.pack(anchor="w")
+
+    def _ejecutar_ga2(self):
+        try:
+            self.btn_ga2.config(state="disabled")
+            self.lbl_ga2_estado.config(text="⚙️ Ejecutando AG #2...", fg="#B8860B")
+            self.root.update_idletasks()
+        except tk.TclError:
+            return
+
+        demanda   = self.ga2_vars["demanda"].get()
+        capacidad = self.ga2_vars["capacidad"].get()
+        docentes  = self.ga2_vars["docentes"].get()
+        lab       = self.ga2_vars["laboratorio"].get()
+
+        cap_ef = max(1, int(capacidad * (0.85 if lab else 1.0)))
+        cap_cl = max(1, int(cap_ef * 0.90))
+        cl_sec = max(1, -(-demanda // cap_cl))  # ceil division
+
+        def _run():
+            res = ga_optimizar_secciones(demanda, cap_ef, docentes)
+            self.root.after(0, lambda: self._actualizar_ga2_ui(res, cl_sec, cap_ef))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _actualizar_ga2_ui(self, res, cl_sec, cap_ef):
+        try:
+            self.btn_ga2.config(state="normal")
+            ag_sec  = res["n_secciones"]
+            ag_ocup = res["ocupacion"]
+            ag_cupos = res["total_cupos"]
+
+            color_ocup = COLOR_OPTIMO if 0.65 <= ag_ocup <= 0.90 else "#B8860B"
+            comp = ("igual al clásico" if ag_sec == cl_sec
+                    else f"AG sugiere {ag_sec} vs clásico {cl_sec}")
+
+            self.ga2_kpi_labels["ag_sec"].config(text=str(ag_sec), fg=ROJO_UTP)
+            self.ga2_kpi_labels["cl_sec"].config(text=str(cl_sec), fg=GRIS_TEXTO)
+            self.ga2_kpi_labels["ag_ocup"].config(text=f"{ag_ocup*100:.1f}%", fg=color_ocup)
+            self.ga2_kpi_labels["ag_cupos"].config(text=str(ag_cupos), fg=ROJO_UTP)
+
+            self.lbl_ga2_estado.config(
+                text=f"✔ Completado — {comp}  |  Factor de ocupación óptimo: {res['factor_ocupacion']*100:.0f}%",
+                fg=COLOR_OPTIMO
+            )
+            self.lbl_ga2_detalle.config(
+                text=(f"Cap. efectiva por aula: {cap_ef}  |  Cap. segura AG: {res['cap_segura']}\n"
+                      f"Fitness AG: {res['fitness']:.1f}")
+            )
+        except tk.TclError:
+            pass
+
+    # ==============================
+    # GA #3 — VISTA Y LÓGICA
+    # ==============================
+    def vista_optimizador_horarios(self):
+        self.limpiar_contenedor()
+
+        header = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        header.pack(fill="x", pady=(18, 5), padx=28)
+
+        tk.Label(header, text="Optimizador de Horarios — Algoritmo Genético",
+                 font=("Segoe UI", 22, "bold"), bg=GRIS_FONDO, fg=NEGRO).pack(side="left")
+
+        self.btn_ejecutar_ga3 = tk.Button(
+            header, text="Ejecutar AG #3 🧬",
+            font=FUENTE_NORMAL, bg=ROJO_UTP, fg=BLANCO,
+            activebackground=ROJO_CLARO, activeforeground=BLANCO,
+            bd=0, padx=14, pady=8, cursor="hand2",
+            command=self._ejecutar_ga3
+        )
+        self.btn_ejecutar_ga3.pack(side="right")
+
+        tk.Label(
+            self.contenedor_principal,
+            text=("Asigna automáticamente los top 30 cursos más demandados a aulas y turnos, "
+                  "minimizando conflictos de aula, conflictos de docente y hacinamiento."),
+            font=("Segoe UI", 10), bg=GRIS_FONDO, fg=GRIS_TEXTO
+        ).pack(anchor="w", padx=30, pady=(0, 6))
+
+        self.lbl_ga3_estado = tk.Label(
+            self.contenedor_principal,
+            text="Estado: No ejecutado — presiona 'Ejecutar AG #3 🧬' para iniciar.",
+            font=("Segoe UI", 10, "italic"), bg=GRIS_FONDO, fg=GRIS_TEXTO
+        )
+        self.lbl_ga3_estado.pack(anchor="w", padx=30, pady=(0, 8))
+
+        frame_tabla_ga3 = tk.Frame(self.contenedor_principal, bg=BLANCO, bd=1, relief="solid")
+        frame_tabla_ga3.pack(fill="both", expand=True, padx=28, pady=(0, 18))
+
+        tk.Label(frame_tabla_ga3, text="Asignación Óptima de Cursos",
+                 font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO).pack(anchor="w", padx=20, pady=(12, 5))
+
+        cols_ga3 = ("curso", "aula_id", "pabellon", "turno", "demanda", "capacidad", "ocupacion", "estado")
+        anchos_ga3 = {"curso": 200, "aula_id": 80, "pabellon": 90, "turno": 90,
+                      "demanda": 80, "capacidad": 90, "ocupacion": 95, "estado": 130}
+        encabezados_ga3 = {"curso": "Curso", "aula_id": "Aula ID", "pabellon": "Pabellón",
+                           "turno": "Turno", "demanda": "Demanda", "capacidad": "Capacidad",
+                           "ocupacion": "Ocupación", "estado": "Estado"}
+
+        scroll_x_ga3 = ttk.Scrollbar(frame_tabla_ga3, orient="horizontal")
+        scroll_y_ga3 = ttk.Scrollbar(frame_tabla_ga3, orient="vertical")
+
+        self.tree_ga3 = ttk.Treeview(
+            frame_tabla_ga3, columns=cols_ga3, show="headings", height=20,
+            xscrollcommand=scroll_x_ga3.set, yscrollcommand=scroll_y_ga3.set
+        )
+        for col in cols_ga3:
+            self.tree_ga3.heading(col, text=encabezados_ga3[col])
+            self.tree_ga3.column(col, anchor="center", width=anchos_ga3[col], stretch=True)
+
+        scroll_x_ga3.config(command=self.tree_ga3.xview)
+        scroll_y_ga3.config(command=self.tree_ga3.yview)
+
+        self.tree_ga3.pack(side="left", fill="both", expand=True, padx=(15, 0), pady=(5, 15))
+        scroll_y_ga3.pack(side="right", fill="y", padx=(0, 5), pady=(5, 15))
+        scroll_x_ga3.pack(fill="x", padx=15, pady=(0, 5))
+
+    def _ejecutar_ga3(self):
+        try:
+            self.lbl_ga3_estado.config(
+                text="⚙️ Ejecutando AG #3... asignando cursos a (aula, turno).",
+                fg="#B8860B"
+            )
+            self.btn_ejecutar_ga3.config(state="disabled")
+            self.root.update_idletasks()
+        except tk.TclError:
+            return
+
+        def _run():
+            resumen, aulas, turnos, asignaciones, score = ga_horarios(self.df)
+            self.root.after(0, lambda: self._actualizar_ga3_ui(
+                resumen, aulas, turnos, asignaciones, score
+            ))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _actualizar_ga3_ui(self, resumen, aulas, turnos, asignaciones, score):
+        try:
+            self.btn_ejecutar_ga3.config(state="normal")
+            for item in self.tree_ga3.get_children():
+                self.tree_ga3.delete(item)
+
+            slot_count = {}
+            for ai, ti in asignaciones:
+                key = (ai, ti)
+                slot_count[key] = slot_count.get(key, 0) + 1
+            conflictos = sum(v - 1 for v in slot_count.values() if v > 1)
+
+            for i, (ai, ti) in enumerate(asignaciones):
+                curso = resumen["nombre_curso"].iloc[i]
+                dem = int(resumen["demanda"].iloc[i])
+                cap = int(aulas["capacidad_aula"].iloc[ai])
+                pab = str(aulas["pabellon"].iloc[ai])
+                turno = str(turnos[ti])
+                aula_id = str(aulas["aula_id"].iloc[ai])
+                ocup = dem / cap if cap > 0 else 2.0
+                estado, _ = self._clasificar_ocupacion(ocup)
+                self.tree_ga3.insert("", "end",
+                    values=(curso, aula_id, pab, turno, dem, cap,
+                            f"{ocup * 100:.1f}%", estado))
+
+            color_estado = COLOR_OPTIMO if conflictos == 0 else "#B8860B"
+            self.lbl_ga3_estado.config(
+                text=(f"✔ Completado — {len(asignaciones)} cursos asignados | "
+                      f"Conflictos de aula: {conflictos} | Fitness: {score:.0f}"),
+                fg=color_estado
+            )
+        except tk.TclError:
+            pass
 
 
 # ==============================
