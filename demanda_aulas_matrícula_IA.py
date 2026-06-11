@@ -1,0 +1,2259 @@
+import pandas as pd
+import mysql.connector
+import numpy as np
+import random
+import threading
+import tkinter as tk
+from tkinter import ttk, messagebox
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.cluster import KMeans
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+# ==============================
+# PALETA DE COLORES UTP & DISEÑO
+# ==============================
+ROJO_UTP = "#8B0000"
+ROJO_CLARO = "#D32F2F"
+NEGRO = "#1C1C1C"
+GRIS_FONDO = "#EAEAEA"
+BLANCO = "#FFFFFF"
+GRIS_TEXTO = "#424242"
+FUENTE_TITULO = ("Segoe UI", 24, "bold")
+FUENTE_SUBTITULO = ("Segoe UI", 14, "bold")
+FUENTE_NORMAL = ("Segoe UI", 11)
+
+# Colores específicos para los Clusters (Consistentes con la interpretación)
+COLOR_SUBUTILIZADO = "#FFD700"  # Dorado/Amarillo
+COLOR_OPTIMO = "#2E7D32"        # Verde
+COLOR_SOBREPOBLADO = "#D32F2F"  # Rojo
+
+# ==============================
+# CONFIGURACIÓN DE BASE DE DATOS LOCAL MYSQL/XAMPP
+# ==============================
+DB_CONFIG = {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "root",
+    "password": "",
+    "database": "demanda_aulas_matricula_ia",
+    "charset": "utf8mb4",
+    "use_pure": True,
+}
+
+COLUMNAS_DATASET = [
+    "periodo",
+    "id_curso",
+    "nombre_curso",
+    "ciclo_relativo",
+    "creditos_curso",
+    "docente_id",
+    "docente_disponible",
+    "aula_id",
+    "capacidad_aula",
+    "pabellon",
+    "horario_seccion",
+    "alumnos_nuevos",
+    "alumnos_prerrequisito",
+    "alumnos_repitentes",
+    "veces_llevado",
+    "carga_academica_proyectada",
+    "cursos_comun",
+    "duracion_semanas",
+    "laboratorio",
+    "tiempo_matricula_min",
+    "alumnos_matriculados",
+]
+
+COLUMNAS_NUMERICAS = [
+    "id_curso",
+    "ciclo_relativo",
+    "creditos_curso",
+    "docente_id",
+    "docente_disponible",
+    "aula_id",
+    "capacidad_aula",
+    "alumnos_nuevos",
+    "alumnos_prerrequisito",
+    "alumnos_repitentes",
+    "veces_llevado",
+    "carga_academica_proyectada",
+    "cursos_comun",
+    "duracion_semanas",
+    "laboratorio",
+    "tiempo_matricula_min",
+    "alumnos_matriculados",
+]
+
+COLUMNAS_FEATURES_GA = [
+    "ciclo_relativo", "creditos_curso", "docente_disponible", "capacidad_aula",
+    "alumnos_nuevos", "alumnos_prerrequisito", "alumnos_repitentes", "veces_llevado",
+    "carga_academica_proyectada", "cursos_comun", "duracion_semanas", "laboratorio",
+    "tiempo_matricula_min",
+]
+
+# ==============================
+# CARGA Y PREPARACIÓN DE DATOS
+# ==============================
+def cargar_datos():
+    """Carga el dataset desde MySQL local manteniendo las mismas columnas del Excel."""
+    conexion = None
+    cursor = None
+    try:
+        conexion = mysql.connector.connect(**DB_CONFIG)
+        cursor = conexion.cursor(dictionary=True)
+
+        columnas_sql = ", ".join(COLUMNAS_DATASET)
+        consulta = f"""
+            SELECT {columnas_sql}
+            FROM vw_dataset_prediccion_aulas
+            ORDER BY id_registro
+        """
+        cursor.execute(consulta)
+        filas = cursor.fetchall()
+
+        df = pd.DataFrame(filas, columns=COLUMNAS_DATASET)
+        if df.empty:
+            messagebox.showerror(
+                "Error",
+                "La base de datos no devolvió registros. Verifica que importaste el script SQL."
+            )
+            return pd.DataFrame()
+
+        for columna in COLUMNAS_NUMERICAS:
+            df[columna] = pd.to_numeric(df[columna], errors="coerce")
+
+        if df[COLUMNAS_NUMERICAS].isnull().any().any():
+            raise ValueError("Existen valores numéricos vacíos o inválidos en la vista SQL.")
+
+        df[COLUMNAS_NUMERICAS] = df[COLUMNAS_NUMERICAS].astype(int)
+        return df
+
+    except Exception as e:
+        messagebox.showerror(
+            "Error de conexión BD",
+            "No se pudo cargar el dataset desde MySQL."
+            "Verifica que Apache/MySQL estén activos en XAMPP, que la BD exista "
+            "y que el usuario/contraseña de DB_CONFIG sean correctos."
+            f"Detalle técnico: {e}"
+        )
+        return pd.DataFrame()
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conexion is not None and conexion.is_connected():
+            conexion.close()
+
+def preparar_datos(df):
+    # Variables predictoras alineadas a los requerimientos del proyecto
+    X = df[[
+        "alumnos_nuevos",
+        "alumnos_prerrequisito",
+        "alumnos_repitentes",
+        "docente_disponible",
+        "capacidad_aula",
+        "duracion_semanas",
+        "laboratorio"
+    ]]
+    y = df["alumnos_matriculados"]
+    return X, y
+
+def entrenar_modelos(X, y):
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Se utiliza Regresión Lineal y Ridge (penalización) para predicción continua pura
+    modelos = {
+        "Regresión Lineal Múltiple": LinearRegression(),
+        "Regresión Ridge": Ridge(alpha=1.0)
+    }
+    resultados = {}
+    
+    for nombre, modelo in modelos.items():
+        modelo.fit(X_train, y_train)
+        prediccion = modelo.predict(X_test)
+        resultados[nombre] = {
+            "modelo": modelo,
+            "MAE": mean_absolute_error(y_test, prediccion),
+            "RMSE": np.sqrt(mean_squared_error(y_test, prediccion))
+        }
+    return resultados
+
+# ==============================
+# ALGORITMOS GENÉTICOS
+# ==============================
+
+def ga_seleccion_variables(df, pop_size=20, n_gen=30, mutation_rate=0.15):
+    """GA #1 — Selecciona el subconjunto de COLUMNAS_FEATURES_GA que minimiza MAE (Ridge, split 80/20)."""
+    candidatas = [c for c in COLUMNAS_FEATURES_GA if c in df.columns]
+    n = len(candidatas)
+    y = df["alumnos_matriculados"].values
+    X_all = df[candidatas].values
+    X_tr, X_te, y_tr, y_te = train_test_split(X_all, y, test_size=0.2, random_state=42)
+
+    def fitness(ind):
+        idx = [i for i in range(n) if ind[i]]
+        if not idx:
+            return -1e9
+        pred = Ridge(alpha=1.0).fit(X_tr[:, idx], y_tr).predict(X_te[:, idx])
+        return -mean_absolute_error(y_te, pred)
+
+    pop = [list(np.random.randint(0, 2, n)) for _ in range(pop_size)]
+    best_ind, best_score = pop[0][:], fitness(pop[0])
+
+    for _ in range(n_gen):
+        scores = [fitness(ind) for ind in pop]
+        gen_best = max(range(pop_size), key=lambda i: scores[i])
+        if scores[gen_best] > best_score:
+            best_score, best_ind = scores[gen_best], pop[gen_best][:]
+        sorted_p = sorted(range(pop_size), key=lambda i: scores[i], reverse=True)
+        new_pop = [pop[sorted_p[0]][:], pop[sorted_p[1]][:]]
+        while len(new_pop) < pop_size:
+            t1 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            t2 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            pt = random.randint(1, n - 1)
+            child = pop[t1][:pt] + pop[t2][pt:]
+            for i in range(n):
+                if random.random() < mutation_rate:
+                    child[i] = 1 - child[i]
+            if sum(child) == 0:
+                child[random.randint(0, n - 1)] = 1
+            new_pop.append(child)
+        pop = new_pop
+
+    seleccionadas = [candidatas[i] for i in range(n) if best_ind[i]]
+    return seleccionadas, -best_score
+
+
+def ga_optimizar_secciones(demanda_plan, capacidad_efectiva, docentes_disponibles,
+                            pop_size=30, n_gen=50):
+    """GA #2 — Optimiza (n_secciones, factor_ocupacion) para distribución de aulas.
+    Cromosoma: [n_sec ∈ 1-10, factor*100 ∈ 60-100]. Penaliza déficit docente y hacinamiento."""
+    if demanda_plan <= 0 or capacidad_efectiva <= 0:
+        return {"n_secciones": 1, "factor_ocupacion": 0.90,
+                "cap_segura": capacidad_efectiva, "total_cupos": capacidad_efectiva,
+                "ocupacion": 0.0, "fitness": 0.0}
+
+    def decode(ind):
+        n_sec = max(1, min(10, ind[0]))
+        factor = max(0.60, min(1.00, ind[1] / 100.0))
+        cap_seg = max(1, int(np.floor(capacidad_efectiva * factor)))
+        total = n_sec * capacidad_efectiva
+        ocup = demanda_plan / total if total > 0 else 2.0
+        return n_sec, factor, cap_seg, total, ocup
+
+    def fitness(ind):
+        n_sec, _, _, _, ocup = decode(ind)
+        s = 200.0 if 0.65 <= ocup <= 0.90 else (80.0 if 0.50 <= ocup < 0.65 else 0.0)
+        s -= max(0.0, ocup - 1.0) * 1200
+        s -= max(0.0, ocup - 0.90) * 400
+        s -= max(0.0, 0.45 - ocup) * 500
+        if docentes_disponibles > 0:
+            s -= max(0, n_sec - docentes_disponibles) * 600
+        s -= abs(ocup - 0.75) * 80
+        return s
+
+    pop = [[random.randint(1, 8), random.randint(70, 100)] for _ in range(pop_size)]
+    best_ind, best_score = pop[0][:], fitness(pop[0])
+
+    for _ in range(n_gen):
+        scores = [fitness(ind) for ind in pop]
+        gen_best = max(range(pop_size), key=lambda i: scores[i])
+        if scores[gen_best] > best_score:
+            best_score, best_ind = scores[gen_best], pop[gen_best][:]
+        sorted_p = sorted(range(pop_size), key=lambda i: scores[i], reverse=True)
+        new_pop = [pop[sorted_p[0]][:], pop[sorted_p[1]][:]]
+        while len(new_pop) < pop_size:
+            t1 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            t2 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            child = [pop[t1][0] if random.random() < 0.5 else pop[t2][0],
+                     pop[t1][1] if random.random() < 0.5 else pop[t2][1]]
+            if random.random() < 0.25:
+                child[0] = max(1, min(10, child[0] + random.randint(-1, 1)))
+            if random.random() < 0.25:
+                child[1] = max(60, min(100, child[1] + random.randint(-5, 5)))
+            new_pop.append(child)
+        pop = new_pop
+
+    n_sec, factor, cap_seg, total, ocup = decode(best_ind)
+    return {"n_secciones": n_sec, "factor_ocupacion": factor,
+            "cap_segura": cap_seg, "total_cupos": total,
+            "ocupacion": ocup, "fitness": best_score}
+
+
+def ga_horarios(df, pop_size=40, n_gen=60, mutation_rate=0.05):
+    """GA #3 — Timetabling: asigna top-30 cursos a (aula, turno) minimizando conflictos y hacinamiento.
+    Cromosoma: [aula_idx * n_cursos, turno_idx * n_cursos]. Devuelve (resumen, aulas, turnos, asignaciones, score)."""
+    resumen = (
+        df.groupby("nombre_curso", as_index=False)
+        .agg(demanda=("alumnos_matriculados", "mean"),
+             laboratorio=("laboratorio", "max"),
+             docente_id=("docente_id", "first"))
+        .sort_values("demanda", ascending=False)
+        .head(30)
+        .reset_index(drop=True)
+    )
+    resumen["demanda"] = resumen["demanda"].round().astype(int)
+
+    aulas = (
+        df[["aula_id", "capacidad_aula", "pabellon"]]
+        .drop_duplicates("aula_id")
+        .reset_index(drop=True)
+    )
+    turnos = sorted(df["horario_seccion"].dropna().unique().tolist())
+
+    n_c, n_a, n_t = len(resumen), len(aulas), len(turnos)
+    if n_a == 0 or n_t == 0 or n_c == 0:
+        return resumen, aulas, turnos, [], 0.0
+
+    caps = aulas["capacidad_aula"].values
+    docs = resumen["docente_id"].values
+    dems = resumen["demanda"].values
+
+    def fitness(ind):
+        a_idx, t_idx = ind[:n_c], ind[n_c:]
+        s = 0.0
+        for i in range(n_c):
+            for j in range(i + 1, n_c):
+                if a_idx[i] == a_idx[j] and t_idx[i] == t_idx[j]:
+                    s -= 800
+                if docs[i] == docs[j] and t_idx[i] == t_idx[j]:
+                    s -= 500
+        for i in range(n_c):
+            ocup = dems[i] / caps[a_idx[i]] if caps[a_idx[i]] > 0 else 2.0
+            if ocup > 1.0:
+                s -= (ocup - 1.0) * 600
+            elif 0.65 <= ocup <= 0.90:
+                s += 100
+            elif ocup < 0.40:
+                s -= (0.40 - ocup) * 150
+        return s
+
+    gene_len = 2 * n_c
+    pop = [list(np.random.randint(0, n_a, n_c)) + list(np.random.randint(0, n_t, n_c))
+           for _ in range(pop_size)]
+    best_ind, best_score = pop[0][:], fitness(pop[0])
+
+    for _ in range(n_gen):
+        scores = [fitness(ind) for ind in pop]
+        gen_best = max(range(pop_size), key=lambda i: scores[i])
+        if scores[gen_best] > best_score:
+            best_score, best_ind = scores[gen_best], pop[gen_best][:]
+        sorted_p = sorted(range(pop_size), key=lambda i: scores[i], reverse=True)
+        new_pop = [pop[sorted_p[0]][:], pop[sorted_p[1]][:]]
+        while len(new_pop) < pop_size:
+            t1 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            t2 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            pt = random.randint(1, gene_len - 1)
+            child = pop[t1][:pt] + pop[t2][pt:]
+            for k in range(gene_len):
+                if random.random() < mutation_rate:
+                    child[k] = (random.randint(0, n_a - 1) if k < n_c
+                                else random.randint(0, n_t - 1))
+            new_pop.append(child)
+        pop = new_pop
+
+    a_asig, t_asig = best_ind[:n_c], best_ind[n_c:]
+    return resumen, aulas, turnos, list(zip(a_asig, t_asig)), best_score
+
+
+# ==============================
+# APLICACIÓN PRINCIPAL
+# ==============================
+class AppDemandaAulas:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Sistema Predictivo de Demanda de Aulas - Gestión Académica")
+        self.root.geometry("1920x1080")
+        self.root.state('zoomed') # Maximizar ventana
+        self.root.configure(bg=GRIS_FONDO)
+
+        self.df = cargar_datos()
+        if self.df.empty: return
+        
+        self.X, self.y = preparar_datos(self.df)
+        self.modelos = entrenar_modelos(self.X, self.y)
+        self.modelo_activo = self.modelos["Regresión Lineal Múltiple"]["modelo"]
+        self.ga_features_resultado = None
+        self.ga_mae_resultado = None
+
+        self.crear_menu_lateral()
+        self.contenedor_principal = tk.Frame(self.root, bg=GRIS_FONDO)
+        self.contenedor_principal.pack(side="right", fill="both", expand=True)
+        
+        self.vista_dashboard()
+
+    # ==============================
+    # NAVEGACIÓN
+    # ==============================
+    def crear_menu_lateral(self):
+        menu = tk.Frame(self.root, bg=NEGRO, width=250)
+        menu.pack(side="left", fill="y")
+        menu.pack_propagate(False)
+
+        tk.Label(menu, text="MENÚ\nADMINISTRATIVO", font=("Segoe UI", 16, "bold"), 
+                 bg=NEGRO, fg=BLANCO, pady=30).pack()
+
+        botones = [
+            ("📊 Dashboard Resumen", self.vista_dashboard),
+            ("📈 Análisis de Aforos", self.vista_analisis),
+            ("🤖 Simulación IA", self.vista_simulacion),
+            ("🧬 AG-1 Variables", self.vista_ga1_variables),
+            ("🧬 AG-2 Secciones", self.vista_ga2_secciones),
+            ("🧬 AG-3 Horarios", self.vista_optimizador_horarios),
+        ]
+
+        for texto, comando in botones:
+            btn = tk.Button(menu, text=texto, font=FUENTE_SUBTITULO, bg=ROJO_UTP, fg=BLANCO,
+                            activebackground=ROJO_CLARO, activeforeground=BLANCO,
+                            bd=0, pady=15, cursor="hand2", command=comando)
+            btn.pack(fill="x", padx=10, pady=10)
+
+    def limpiar_contenedor(self):
+        for widget in self.contenedor_principal.winfo_children():
+            widget.destroy()
+
+    # ==============================
+    # 1. VISTA: DASHBOARD
+    # ==============================
+    def vista_dashboard(self):
+        self.limpiar_contenedor()
+        
+        titulo = tk.Label(self.contenedor_principal, text="Resumen General Académico", 
+                          font=FUENTE_TITULO, bg=GRIS_FONDO, fg=NEGRO)
+        titulo.pack(pady=20, anchor="w", padx=40)
+
+        # KPIs (Tarjetas)
+        frame_kpis = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        frame_kpis.pack(fill="x", padx=40, pady=10)
+
+        mae_actual = self.modelos["Regresión Lineal Múltiple"]["MAE"]
+        rmse_actual = self.modelos["Regresión Lineal Múltiple"]["RMSE"]
+        total_alumnos = self.df['alumnos_matriculados'].sum()
+        aforo_promedio = self.df['capacidad_aula'].mean()
+
+        self.crear_tarjeta(frame_kpis, "Total Matrículas (Histórico)", f"{total_alumnos:,}")
+        self.crear_tarjeta(frame_kpis, "Aforo Promedio por Aula", f"{aforo_promedio:.0f} alumnos")
+        self.crear_tarjeta(frame_kpis, "Margen de Error (MAE)", f"± {mae_actual:.2f} alumnos")
+        self.crear_tarjeta(frame_kpis, "Penalización Error (RMSE)", f"{rmse_actual:.2f}")
+
+        # --- TABLA CON SCROLLBAR HORIZONTAL ---
+        frame_tabla = tk.Frame(self.contenedor_principal, bg=BLANCO, bd=1, relief="solid")
+        frame_tabla.pack(fill="both", expand=True, padx=40, pady=20)
+        
+        tk.Label(frame_tabla, text="Últimos Registros Históricos", 
+                 font=FUENTE_SUBTITULO, bg=BLANCO).pack(anchor="w", padx=20, pady=10)
+
+        columnas_admin = ["periodo", "nombre_curso", "pabellon", "horario_seccion", 
+                          "capacidad_aula", "alumnos_matriculados"]
+        
+        # Crear scrollbar horizontal
+        scroll_x = ttk.Scrollbar(frame_tabla, orient="horizontal")
+        
+        # Crear Treeview vinculado a la scrollbar
+        tree = ttk.Treeview(frame_tabla, columns=columnas_admin, show="headings", 
+                            height=15, xscrollcommand=scroll_x.set)
+        
+        scroll_x.config(command=tree.xview)
+        
+        # Empaquetar: Primero el Treeview, luego la barra abajo
+        tree.pack(fill="both", expand=True, padx=20, pady=(10, 0))
+        scroll_x.pack(fill="x", padx=20, pady=(0, 10))
+
+        encabezados = ["Periodo", "Asignatura", "Pabellón", "Turno", "Capacidad Física", "Matriculados Reales"]
+        for col, encabezado in zip(columnas_admin, encabezados):
+            tree.heading(col, text=encabezado)
+            # Ajustamos un ancho mínimo para forzar que aparezca el scroll si la ventana es pequeña
+            tree.column(col, anchor="center", width=150) 
+
+        style = ttk.Style()
+        style.configure("Treeview.Heading", font=("Segoe UI", 11, "bold"), background=ROJO_UTP, foreground=NEGRO)
+        style.configure("Treeview", font=("Segoe UI", 10), rowheight=30)
+
+        for _, row in self.df[columnas_admin].head(100).iterrows():
+            tree.insert("", "end", values=list(row))
+
+    def crear_tarjeta(self, parent, titulo, valor):
+        card = tk.Frame(parent, bg=BLANCO, bd=1, relief="solid", width=300, height=120)
+        card.pack(side="left", padx=15, expand=True, fill="both")
+        card.pack_propagate(False)
+        tk.Label(card, text=titulo, font=("Segoe UI", 12), bg=BLANCO, fg=GRIS_TEXTO).pack(pady=(20, 5))
+        tk.Label(card, text=valor, font=("Segoe UI", 20, "bold"), bg=BLANCO, fg=ROJO_UTP).pack()
+
+    # ==============================
+    # 2. VISTA: ANÁLISIS
+    # ==============================
+    def vista_analisis(self):
+        self.limpiar_contenedor()
+
+        header_frame = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        header_frame.pack(fill="x", pady=20, padx=40)
+
+        tk.Label(header_frame, text="Análisis de Eficiencia de Infraestructura",
+                 font=FUENTE_TITULO, bg=GRIS_FONDO, fg=NEGRO).pack(side="left")
+
+        self.mostrar_info = False
+        self.btn_toggle = tk.Button(header_frame, text="Ver Interpretación 📝", font=FUENTE_NORMAL,
+                                    bg=ROJO_UTP, fg=BLANCO, bd=0, padx=20, cursor="hand2",
+                                    command=self.toggle_interpretacion)
+        self.btn_toggle.pack(side="right")
+
+        self.frame_contenido_analisis = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        self.frame_contenido_analisis.pack(fill="both", expand=True, padx=40, pady=10)
+
+        # Variables numéricas aptas para clustering (se excluyen categóricas)
+        vars_numericas = [
+            "alumnos_matriculados", "capacidad_aula", "carga_academica_proyectada",
+            "creditos_curso", "alumnos_repitentes", "tiempo_matricula_min",
+            "alumnos_nuevos", "veces_llevado"
+        ]
+        self.vars_disponibles = [v for v in vars_numericas if v in self.df.columns]
+
+        # Panel de controles: Comboboxes para selección dinámica de variables X e Y
+        panel_controles = tk.Frame(self.frame_contenido_analisis, bg=GRIS_FONDO)
+        panel_controles.pack(fill="x", pady=(0, 10))
+
+        tk.Label(panel_controles, text="Variable X:", font=FUENTE_NORMAL,
+                 bg=GRIS_FONDO, fg=NEGRO).pack(side="left", padx=(0, 5))
+        self.combo_x = ttk.Combobox(panel_controles, values=self.vars_disponibles,
+                                    state="readonly", width=25)
+        self.combo_x.set("alumnos_matriculados" if "alumnos_matriculados" in self.vars_disponibles
+                         else self.vars_disponibles[0])
+        self.combo_x.pack(side="left", padx=(0, 20))
+
+        tk.Label(panel_controles, text="Variable Y:", font=FUENTE_NORMAL,
+                 bg=GRIS_FONDO, fg=NEGRO).pack(side="left", padx=(0, 5))
+        self.combo_y = ttk.Combobox(panel_controles, values=self.vars_disponibles,
+                                    state="readonly", width=25)
+        self.combo_y.set("capacidad_aula" if "capacidad_aula" in self.vars_disponibles
+                         else self.vars_disponibles[1])
+        self.combo_y.pack(side="left", padx=(0, 20))
+
+        # Actualización automática al cambiar cualquier variable
+        self.combo_x.bind("<<ComboboxSelected>>", lambda _: self._actualizar_analisis())
+        self.combo_y.bind("<<ComboboxSelected>>", lambda _: self._actualizar_analisis())
+
+        tk.Button(panel_controles, text="Actualizar Análisis 🔄", font=FUENTE_NORMAL,
+                  bg=ROJO_UTP, fg=BLANCO, bd=0, padx=15, cursor="hand2",
+                  command=self._actualizar_analisis).pack(side="left")
+
+        self.panel_grafico = tk.Frame(self.frame_contenido_analisis, bg=GRIS_FONDO)
+        self.panel_grafico.pack(fill="both", expand=True)
+
+        # Panel de interpretación: se crea aquí pero se muestra solo con el toggle
+        self.panel_info = tk.Frame(self.frame_contenido_analisis, bg=BLANCO, bd=2, relief="ridge")
+
+        # Ejecutar análisis inicial con los valores por defecto
+        self._actualizar_analisis()
+
+    def _actualizar_analisis(self):
+        """Ejecuta el pipeline completo con K=3 fijo cada vez que cambian los Combobox.
+
+        K=3 es una decisión de dominio administrativo: la infraestructura académica
+        tiene exactamente 3 estados operativos relevantes y excluyentes:
+          • Subutilización  — capacidad ociosa, costo operativo innecesario
+          • Eficiencia       — ocupación equilibrada, uso ideal del activo
+          • Hacinamiento    — demanda ≥ capacidad, riesgo académico y de seguridad
+
+        El método del codo y el silhouette score se usan únicamente como herramientas
+        de VALIDACIÓN para confirmar que K=3 es razonable con los datos seleccionados.
+        """
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.metrics import silhouette_score
+
+        K = 3  # Valor de diseño administrativo — fijo por definición del modelo
+
+        var_x = self.combo_x.get()
+        var_y = self.combo_y.get()
+
+        if var_x == var_y:
+            messagebox.showwarning("Variables iguales",
+                                   "Selecciona variables distintas para X e Y.")
+            return
+        if var_x not in self.df.columns or var_y not in self.df.columns:
+            messagebox.showerror("Error de datos",
+                                 f"Columna no encontrada: '{var_x}' o '{var_y}'.")
+            return
+
+        # Selección EXPLÍCITA por nombre — ningún ciclo anterior puede influir
+        datos = self.df[[var_x, var_y]].dropna()
+        if len(datos) < 9:
+            messagebox.showerror("Datos insuficientes",
+                                 "Se necesitan al menos 9 filas válidas para el clustering.")
+            return
+
+        # Array 2-D fresco — columna 0 = var_x, columna 1 = var_y
+        X_raw = datos[[var_x, var_y]].values
+
+        # DEBUG: verifica en consola que el pipeline usa las variables correctas
+        print(f"\n{'='*60}")
+        print(f"[ANALISIS] var_x={var_x!r}  var_y={var_y!r}")
+        print(f"[ANALISIS] Filas válidas : {len(X_raw)}")
+        print(f"[ANALISIS] Rango {var_x}: [{X_raw[:,0].min():.2f}, {X_raw[:,0].max():.2f}]")
+        print(f"[ANALISIS] Rango {var_y}: [{X_raw[:,1].min():.2f}, {X_raw[:,1].max():.2f}]")
+
+        # StandardScaler: normaliza var_x y var_y a media=0, std=1.
+        # Necesario porque KMeans usa distancias euclidianas; sin normalizar, la variable
+        # con mayor rango dominaría la geometría del clustering.
+        scaler   = StandardScaler()
+        X_scaled = scaler.fit_transform(X_raw)
+
+        # Inercias sobre datos CRUDOS para el gráfico del codo.
+        # Al usar X_raw (no X_scaled), el eje Y refleja la escala real de cada variable:
+        # "capacidad_aula" (rango ~200) produce inercias en miles,
+        # "veces_llevado" (rango ~10) las produce en decenas — curvas visualmente distintas.
+        inercias = []
+        for k in range(1, 11):
+            km = KMeans(n_clusters=k, n_init=10, random_state=42)
+            km.fit(X_raw)
+            inercias.append(km.inertia_)
+
+        print(f"[ANALISIS] Inercias K=1..10: {[round(v, 1) for v in inercias]}")
+        print(f"[ANALISIS] Inercia en K=3  : {inercias[2]:,.1f}")
+
+        # KMeans con K=3 sobre datos normalizados
+        # n_init=10: 10 inicializaciones distintas, conserva la de menor inercia
+        # random_state=42: semilla fija para reproducibilidad exacta
+        kmeans           = KMeans(n_clusters=K, n_init=10, random_state=42)
+        labels           = kmeans.fit_predict(X_scaled)
+        centroids_scaled = kmeans.cluster_centers_
+        centroids_real   = scaler.inverse_transform(centroids_scaled)
+
+        # Silhouette Score: valida la calidad del agrupamiento K=3 en los datos actuales
+        try:
+            sil_score = silhouette_score(X_scaled, labels)
+        except Exception:
+            sil_score = 0.0
+
+        print(f"[ANALISIS] Silhouette Score: {sil_score:.4f}")
+
+        interp_sil = ("Excelente" if sil_score > 0.7 else
+                      "Bueno"     if sil_score > 0.5 else
+                      "Aceptable" if sil_score > 0.25 else "Débil")
+
+        cluster_roles = self._asignar_roles_clusters(centroids_real, var_x, var_y)
+
+        self.df['cluster'] = -1
+        self.df.loc[datos.index, 'cluster'] = labels
+
+        # Cerrar figura anterior para liberar estado interno de matplotlib
+        fig_prev = getattr(self, '_fig_analisis', None)
+        if fig_prev is not None:
+            plt.close(fig_prev)
+
+        for widget in self.panel_grafico.winfo_children():
+            widget.destroy()
+
+        # Figura completamente nueva en cada ejecución
+        self._fig_analisis, (ax_scatter, ax_codo) = plt.subplots(1, 2, figsize=(14, 5))
+        self._fig_analisis.patch.set_facecolor(GRIS_FONDO)
+
+        colores_fijos = {
+            "subutilizado": COLOR_SUBUTILIZADO,
+            "optimo":       COLOR_OPTIMO,
+            "sobrepoblado": COLOR_SOBREPOBLADO
+        }
+
+        # Scatter con valores REALES para que los ejes sean legibles
+        for cid in range(K):
+            rol   = cluster_roles.get(cid, "optimo")
+            color = colores_fijos[rol]
+            mask  = labels == cid
+            ax_scatter.scatter(X_raw[mask, 0], X_raw[mask, 1],
+                               c=color, alpha=0.7, edgecolors='w', s=80,
+                               label=f"Cluster {cid}")
+
+        ax_scatter.set_title(f"K=3: {var_x} vs {var_y}", fontsize=13, pad=15)
+        ax_scatter.set_xlabel(var_x.replace("_", " ").title(), fontsize=11)
+        ax_scatter.set_ylabel(var_y.replace("_", " ").title(), fontsize=11)
+        ax_scatter.legend(fontsize=9)
+        ax_scatter.grid(True, linestyle="--", alpha=0.6)
+        ax_scatter.set_facecolor("#F9F9F9")
+        ax_scatter.annotate(f"Silhouette: {sil_score:.3f} — {interp_sil}",
+                            xy=(0.02, 0.97), xycoords="axes fraction",
+                            fontsize=9, va="top",
+                            bbox=dict(boxstyle="round,pad=0.3", fc=BLANCO, alpha=0.85))
+
+        # ── Gráfico del codo (validación visual de K=3) ──────────────────────
+        # La curva usa inercias sobre X_raw: el eje Y cambia con cada par de
+        # variables, evidenciando que el recálculo es real.
+        ax_codo.plot(range(1, 11), inercias, "o-",
+                     color=ROJO_UTP, linewidth=2, markersize=6, zorder=3,
+                     label="Inercia por K")
+
+        # Marcador prominente en K=3
+        val_k3 = inercias[2]
+        ax_codo.scatter([3], [val_k3], s=280, color=COLOR_OPTIMO,
+                        zorder=5, marker='*')
+
+        # Línea vertical fija en K=3
+        ax_codo.axvline(x=3, color=COLOR_OPTIMO, linestyle="--",
+                        alpha=0.75, linewidth=1.8)
+
+        # Zona sombreada de retornos decrecientes (K > 3)
+        ax_codo.axvspan(3.5, 10.5, alpha=0.07, color=GRIS_TEXTO)
+        ax_codo.text(3.7, inercias[0] * 0.97,
+                     "retornos\ndecrecientes", fontsize=7.5,
+                     color=GRIS_TEXTO, va="top", style="italic")
+
+        # Anotación con justificación administrativa de K=3
+        y_rango = inercias[0] - inercias[-1]
+        ann_y   = inercias[-1] + y_rango * 0.55
+        ax_codo.annotate(
+            f"K=3 (modelo administrativo)\nInercia: {val_k3:,.0f}",
+            xy=(3, val_k3),
+            xytext=(4.4, ann_y),
+            fontsize=8.5, color=COLOR_OPTIMO, fontweight="bold",
+            arrowprops=dict(arrowstyle="->", color=COLOR_OPTIMO, lw=1.5),
+            bbox=dict(boxstyle="round,pad=0.4", fc=BLANCO,
+                      ec=COLOR_OPTIMO, alpha=0.92)
+        )
+
+        # Eje secundario: mejora marginal por K (barras %)
+        # Verde para K≤3 (zona útil), gris para K>3 (retornos decrecientes)
+        gains   = np.abs(np.diff(inercias))
+        rel_pct = gains / (inercias[0] + 1e-9) * 100
+        bar_cols = [COLOR_OPTIMO if k <= 3 else "#BDBDBD" for k in range(2, 11)]
+        ax_r = ax_codo.twinx()
+        ax_r.bar(range(2, 11), rel_pct, alpha=0.28, color=bar_cols,
+                 width=0.55, zorder=2)
+        ax_r.set_ylabel("Mejora marginal (%)", fontsize=9, color=GRIS_TEXTO)
+        ax_r.tick_params(axis="y", labelcolor=GRIS_TEXTO, labelsize=8)
+        for k_bar, pct, col in zip(range(2, 11), rel_pct, bar_cols):
+            if pct > 2:
+                ax_r.text(k_bar, pct + 0.3, f"{pct:.0f}%",
+                          ha="center", va="bottom", fontsize=7,
+                          color=col, fontweight="bold")
+
+        ax_codo.set_title("Método del Codo — Validación de K=3", fontsize=13, pad=15)
+        ax_codo.set_xlabel("Número de Clusters (K)", fontsize=11)
+        lbl_x = var_x.replace("_", " ")[:14]
+        lbl_y = var_y.replace("_", " ")[:14]
+        ax_codo.set_ylabel(f"Inercia  [{lbl_x} + {lbl_y}]", fontsize=9)
+        ax_codo.legend(fontsize=8, loc="upper right")
+        ax_codo.grid(True, linestyle="--", alpha=0.5, zorder=1)
+        ax_codo.set_facecolor("#F9F9F9")
+        ax_codo.set_xticks(range(1, 11))
+
+        plt.tight_layout(pad=2.0)
+
+        canvas = FigureCanvasTkAgg(self._fig_analisis, master=self.panel_grafico)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        self._construir_panel_info(cluster_roles, centroids_real, var_x, var_y,
+                                   sil_score, interp_sil)
+
+    def _asignar_roles_clusters(self, centroids_real, var_x, var_y):
+        """Asigna el rol semántico de cada uno de los 3 clusters según centroides reales.
+
+        K=3 siempre produce exactamente: subutilizado / optimo / sobrepoblado.
+        Con variables alumnos vs capacidad usa el ratio de ocupación (demanda/oferta).
+        Con cualquier otro par ordena por magnitud del centroide en var_x.
+        """
+        usa_ratio = ("alumno" in var_x.lower() and "capacidad" in var_y.lower())
+
+        if usa_ratio:
+            # Mayor ratio → mayor ocupación relativa → mayor riesgo de hacinamiento
+            pares = [(i, c[0] / c[1] if c[1] > 0 else float("inf"))
+                     for i, c in enumerate(centroids_real)]
+        else:
+            pares = [(i, c[0]) for i, c in enumerate(centroids_real)]
+
+        pares.sort(key=lambda x: x[1])
+        return {
+            pares[0][0]: "subutilizado",
+            pares[1][0]: "optimo",
+            pares[2][0]: "sobrepoblado"
+        }
+
+    def _construir_panel_info(self, cluster_roles, centroids_real, var_x, var_y,
+                               sil_score, interp_sil):
+        """Reconstruye el panel de interpretación con descripciones dinámicas."""
+        for widget in self.panel_info.winfo_children():
+            widget.destroy()
+
+        tk.Label(self.panel_info, text="Interpretación Administrativa de Datos",
+                 font=FUENTE_SUBTITULO, bg=BLANCO, fg=ROJO_UTP).pack(pady=(20, 5))
+
+        tk.Label(self.panel_info,
+                 text=(f"K = 3  (modelo administrativo: Subutilización / Eficiencia / Hacinamiento)"
+                       f"   |   Silhouette: {sil_score:.3f}  →  {interp_sil}"),
+                 font=("Segoe UI", 11, "italic"), bg=BLANCO, fg=GRIS_TEXTO).pack(pady=(0, 15))
+
+        frame_detalles = tk.Frame(self.panel_info, bg=BLANCO)
+        frame_detalles.pack(padx=50, fill="both")
+
+        plantillas = {
+            "subutilizado": {
+                "emoji": "🟡", "titulo": "Subutilización Crítica", "color": COLOR_SUBUTILIZADO,
+                "desc": ("Aulas con capacidad muy superior a la demanda real.\n"
+                         "Centroide → {vx}: {cx:.1f} | {vy}: {cy:.1f}\n"
+                         "Impacto: Costo operativo innecesario en energía y mantenimiento.\n"
+                         "Recomendación: Mover a pabellones menores o reasignar secciones.")
+            },
+            "optimo": {
+                "emoji": "🟢", "titulo": "Eficiencia Operativa", "color": COLOR_OPTIMO,
+                "desc": ("Aulas con relación de ocupación equilibrada y saludable.\n"
+                         "Centroide → {vx}: {cx:.1f} | {vy}: {cy:.1f}\n"
+                         "Impacto: Uso ideal del activo físico.\n"
+                         "Recomendación: Escalar este modelo a otras sedes.")
+            },
+            "sobrepoblado": {
+                "emoji": "🔴", "titulo": "Riesgo de Hacinamiento", "color": COLOR_SOBREPOBLADO,
+                "desc": ("La demanda iguala o supera la capacidad física del aula.\n"
+                         "Centroide → {vx}: {cx:.1f} | {vy}: {cy:.1f}\n"
+                         "Impacto: Deterioro de la calidad académica y riesgo de seguridad.\n"
+                         "Recomendación: División inmediata de secciones.")
+            }
+        }
+
+        vx = var_x.replace("_", " ")
+        vy = var_y.replace("_", " ")
+
+        for cluster_id, rol in sorted(cluster_roles.items()):
+            p    = plantillas[rol]
+            cx   = centroids_real[cluster_id][0]
+            cy   = centroids_real[cluster_id][1]
+            desc = p["desc"].format(vx=vx, cx=cx, vy=vy, cy=cy)
+            tk.Label(frame_detalles,
+                     text=f"{p['emoji']} Cluster {cluster_id}: {p['titulo']}",
+                     font=("Segoe UI", 13, "bold"), fg=p["color"], bg=BLANCO
+                     ).pack(anchor="w", pady=(10, 0))
+            tk.Label(frame_detalles, text=desc, font=("Segoe UI", 12),
+                     fg=GRIS_TEXTO, bg=BLANCO, wraplength=700, justify="left"
+                     ).pack(anchor="w", padx=20, pady=(0, 10))
+
+    def toggle_interpretacion(self):
+        if not self.mostrar_info:
+            self.panel_grafico.pack_forget()
+            self.panel_info.pack(fill="both", expand=True, pady=20)
+            self.btn_toggle.config(text="Ver Gráfico 📊")
+            self.mostrar_info = True
+        else:
+            self.panel_info.pack_forget()
+            self.panel_grafico.pack(fill="both", expand=True)
+            self.btn_toggle.config(text="Ver Interpretación 📝")
+            self.mostrar_info = False
+
+    # ==============================
+    # 3. VISTA: SIMULACIÓN
+    # ==============================
+    def vista_simulacion(self):
+        """Vista profesional para simular demanda, aforo, secciones y recursos.
+
+        Ajuste visual:
+        - El formulario izquierdo ahora tiene scroll vertical.
+        - El panel de resultados usa un layout vertical responsivo.
+        - La guía de variables también tiene scroll.
+        - El gráfico y la tabla ya no compiten horizontalmente por espacio.
+        """
+        self.limpiar_contenedor()
+
+        # =========================
+        # HEADER
+        # =========================
+        header = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        header.pack(fill="x", pady=(18, 5), padx=28)
+
+        titulo_header = tk.Label(
+            header,
+            text="Simulador Predictivo de Carga de Aulas",
+            font=("Segoe UI", 22, "bold"),
+            bg=GRIS_FONDO,
+            fg=NEGRO
+        )
+        titulo_header.pack(side="left", fill="x", expand=True, anchor="w")
+
+        acciones = tk.Frame(header, bg=GRIS_FONDO)
+        acciones.pack(side="right", anchor="e")
+
+        self.btn_guia = tk.Button(
+            acciones,
+            text="Guía de Variables 📘",
+            font=FUENTE_NORMAL,
+            bg=ROJO_UTP,
+            fg=BLANCO,
+            activebackground=ROJO_CLARO,
+            activeforeground=BLANCO,
+            bd=0,
+            padx=14,
+            pady=8,
+            cursor="hand2",
+            command=self.toggle_guia_simulacion
+        )
+        self.btn_guia.pack(side="left", padx=5)
+
+        self.btn_detalles = tk.Button(
+            acciones,
+            text="Informe Detallado 📄",
+            font=FUENTE_NORMAL,
+            bg=NEGRO,
+            fg=BLANCO,
+            activebackground=GRIS_TEXTO,
+            activeforeground=BLANCO,
+            bd=0,
+            padx=14,
+            pady=8,
+            cursor="hand2",
+            command=self.toggle_detalles
+        )
+        self.btn_detalles.pack(side="left", padx=5)
+
+        subtitulo = tk.Label(
+            self.contenedor_principal,
+            text="Evalúa demanda estimada, capacidad efectiva, secciones necesarias, ocupación y disponibilidad docente.",
+            font=("Segoe UI", 10),
+            bg=GRIS_FONDO,
+            fg=GRIS_TEXTO
+        )
+        subtitulo.pack(anchor="w", padx=30, pady=(0, 8))
+
+        # =========================
+        # CONTENEDOR GENERAL RESPONSIVO
+        # =========================
+        cuerpo = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        cuerpo.pack(fill="both", expand=True, padx=28, pady=(0, 18))
+        cuerpo.columnconfigure(0, weight=0, minsize=410)
+        cuerpo.columnconfigure(1, weight=1)
+        cuerpo.rowconfigure(0, weight=1)
+
+        # =========================
+        # PANEL IZQUIERDO: FORMULARIO CON SCROLL
+        # =========================
+        f_form_outer = tk.LabelFrame(
+            cuerpo,
+            text="Parámetros del escenario",
+            font=FUENTE_SUBTITULO,
+            bg=BLANCO,
+            fg=NEGRO,
+            padx=6,
+            pady=6
+        )
+        f_form_outer.grid(row=0, column=0, sticky="ns", padx=(0, 18), pady=4)
+        f_form_outer.grid_propagate(False)
+        f_form_outer.configure(width=420)
+
+        canvas_form = tk.Canvas(f_form_outer, bg=BLANCO, highlightthickness=0, width=398)
+        scrollbar_form = ttk.Scrollbar(f_form_outer, orient="vertical", command=canvas_form.yview)
+        self.form_sim = tk.Frame(canvas_form, bg=BLANCO)
+
+        form_window = canvas_form.create_window((0, 0), window=self.form_sim, anchor="nw")
+        self.form_sim.bind(
+            "<Configure>",
+            lambda e: canvas_form.configure(scrollregion=canvas_form.bbox("all"))
+        )
+        canvas_form.bind(
+            "<Configure>",
+            lambda e: canvas_form.itemconfig(form_window, width=e.width)
+        )
+        canvas_form.configure(yscrollcommand=scrollbar_form.set)
+        canvas_form.pack(side="left", fill="both", expand=True)
+        scrollbar_form.pack(side="right", fill="y")
+
+        # Capacidad base fija en 40 porque la BD fue ajustada a aulas homogéneas.
+        capacidad_base = 40
+        if "capacidad_aula" in self.df.columns and len(self.df["capacidad_aula"]) > 0:
+            try:
+                capacidad_base = int(round(float(self.df["capacidad_aula"].median())))
+            except Exception:
+                capacidad_base = 40
+
+        self.vars_input = {
+            "alumnos_nuevos": tk.IntVar(value=25),
+            "alumnos_prerrequisito": tk.IntVar(value=20),
+            "alumnos_repitentes": tk.IntVar(value=8),
+            "capacidad_aula": tk.IntVar(value=capacidad_base),
+            "duracion_semanas": tk.IntVar(value=18),
+            "docentes_disponibles": tk.IntVar(value=2),
+            "laboratorio": tk.IntVar(value=0),
+        }
+
+        self.form_sim.columnconfigure(0, weight=1)
+        self.form_sim.columnconfigure(1, weight=0)
+
+        fila = 0
+        fila = self._crear_input_sim(
+            self.form_sim, fila, "Alumnos nuevos", self.vars_input["alumnos_nuevos"],
+            0, 120, "Demanda nueva esperada para el curso."
+        )
+        fila = self._crear_input_sim(
+            self.form_sim, fila, "Alumnos con prerrequisito", self.vars_input["alumnos_prerrequisito"],
+            0, 120, "Estudiantes habilitados para llevar la asignatura."
+        )
+        fila = self._crear_input_sim(
+            self.form_sim, fila, "Alumnos repitentes", self.vars_input["alumnos_repitentes"],
+            0, 80, "Sobrecarga académica por repetición del curso."
+        )
+        fila = self._crear_input_sim(
+            self.form_sim, fila, "Capacidad por aula", self.vars_input["capacidad_aula"],
+            1, 120, "Capacidad física base. En este avance se usa 40."
+        )
+        fila = self._crear_input_sim(
+            self.form_sim, fila, "Duración en semanas", self.vars_input["duracion_semanas"],
+            1, 24, "Duración operativa del curso en el periodo."
+        )
+        fila = self._crear_input_sim(
+            self.form_sim, fila, "Docentes disponibles", self.vars_input["docentes_disponibles"],
+            0, 20, "Recursos docentes disponibles para abrir secciones."
+        )
+
+        tk.Label(
+            self.form_sim,
+            text="Requiere laboratorio",
+            font=FUENTE_NORMAL,
+            bg=BLANCO,
+            fg=NEGRO
+        ).grid(row=fila, column=0, sticky="w", padx=12, pady=(8, 0))
+
+        tk.Checkbutton(
+            self.form_sim,
+            text="Sí, reduce capacidad efectiva",
+            variable=self.vars_input["laboratorio"],
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            activebackground=BLANCO,
+            font=("Segoe UI", 9)
+        ).grid(row=fila, column=1, sticky="e", padx=(0, 12), pady=(8, 0))
+        fila += 1
+
+        tk.Label(
+            self.form_sim,
+            text="Si el curso usa laboratorio, se reserva espacio para equipos y seguridad.",
+            font=("Segoe UI", 8),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            wraplength=280,
+            justify="left"
+        ).grid(row=fila, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 8))
+        fila += 1
+
+        tk.Label(
+            self.form_sim,
+            text="Escenario de planificación",
+            font=FUENTE_NORMAL,
+            bg=BLANCO,
+            fg=NEGRO
+        ).grid(row=fila, column=0, sticky="w", padx=12, pady=(8, 2))
+
+        self.combo_escenario_sim = ttk.Combobox(
+            self.form_sim,
+            values=["Conservador (+MAE)", "Base IA", "Optimista (-MAE)"],
+            state="readonly",
+            width=20
+        )
+        self.combo_escenario_sim.set("Conservador (+MAE)")
+        self.combo_escenario_sim.grid(row=fila, column=1, sticky="e", padx=(0, 12), pady=(8, 2))
+        fila += 1
+
+        tk.Label(
+            self.form_sim,
+            text="Conservador usa el margen de error para reducir riesgo de falta de cupos.",
+            font=("Segoe UI", 8),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            wraplength=280,
+            justify="left"
+        ).grid(row=fila, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 8))
+        fila += 1
+
+        tk.Label(
+            self.form_sim,
+            text="Turno / Pabellón referencial",
+            font=FUENTE_NORMAL,
+            bg=BLANCO,
+            fg=NEGRO
+        ).grid(row=fila, column=0, sticky="w", padx=12, pady=(8, 2))
+
+        contexto = tk.Frame(self.form_sim, bg=BLANCO)
+        contexto.grid(row=fila, column=1, sticky="e", padx=(0, 12), pady=(8, 2))
+
+        horarios = sorted([str(x) for x in self.df["horario_seccion"].dropna().unique()]) if "horario_seccion" in self.df.columns else ["Mañana", "Tarde", "Noche"]
+        pabellones = sorted([str(x) for x in self.df["pabellon"].dropna().unique()]) if "pabellon" in self.df.columns else ["A", "B", "C"]
+
+        self.combo_turno_sim = ttk.Combobox(contexto, values=horarios, state="readonly", width=9)
+        self.combo_turno_sim.set(horarios[0] if horarios else "Mañana")
+        self.combo_turno_sim.pack(side="left", padx=(0, 5))
+
+        self.combo_pabellon_sim = ttk.Combobox(contexto, values=pabellones, state="readonly", width=4)
+        self.combo_pabellon_sim.set(pabellones[0] if pabellones else "A")
+        self.combo_pabellon_sim.pack(side="left")
+        fila += 1
+
+        tk.Button(
+            self.form_sim,
+            text="EJECUTAR SIMULACIÓN IA",
+            font=FUENTE_SUBTITULO,
+            bg=ROJO_UTP,
+            fg=BLANCO,
+            activebackground=ROJO_CLARO,
+            activeforeground=BLANCO,
+            bd=0,
+            pady=10,
+            cursor="hand2",
+            command=self.realizar_prediccion
+        ).grid(row=fila, column=0, columnspan=2, padx=12, pady=(22, 8), sticky="we")
+        fila += 1
+
+        tk.Button(
+            self.form_sim,
+            text="Restablecer valores",
+            font=FUENTE_NORMAL,
+            bg=GRIS_TEXTO,
+            fg=BLANCO,
+            activebackground=NEGRO,
+            activeforeground=BLANCO,
+            bd=0,
+            pady=7,
+            cursor="hand2",
+            command=self._restablecer_simulacion
+        ).grid(row=fila, column=0, columnspan=2, padx=12, pady=(0, 12), sticky="we")
+
+        # =========================
+        # PANEL DERECHO
+        # =========================
+        self.f_res_container = tk.Frame(cuerpo, bg=GRIS_FONDO)
+        self.f_res_container.grid(row=0, column=1, sticky="nsew", pady=4)
+        self.f_res_container.columnconfigure(0, weight=1)
+        self.f_res_container.rowconfigure(0, weight=1)
+
+        # Resultado principal con scroll para pantallas pequeñas.
+        self.panel_resultado_sim = tk.Frame(self.f_res_container, bg=GRIS_FONDO)
+        self.panel_resultado_sim.pack(fill="both", expand=True)
+
+        canvas_result = tk.Canvas(self.panel_resultado_sim, bg=GRIS_FONDO, highlightthickness=0)
+        scroll_result = ttk.Scrollbar(self.panel_resultado_sim, orient="vertical", command=canvas_result.yview)
+        self.resultado_content_sim = tk.Frame(canvas_result, bg=GRIS_FONDO)
+
+        result_window = canvas_result.create_window((0, 0), window=self.resultado_content_sim, anchor="nw")
+        self.resultado_content_sim.bind(
+            "<Configure>",
+            lambda e: canvas_result.configure(scrollregion=canvas_result.bbox("all"))
+        )
+        canvas_result.bind(
+            "<Configure>",
+            lambda e: canvas_result.itemconfig(result_window, width=e.width)
+        )
+        canvas_result.configure(yscrollcommand=scroll_result.set)
+        canvas_result.pack(side="left", fill="both", expand=True)
+        scroll_result.pack(side="right", fill="y")
+
+        # Banner de estado responsivo.
+        self.banner_sim = tk.Frame(self.resultado_content_sim, bg=BLANCO, bd=1, relief="solid")
+        self.banner_sim.pack(fill="x", pady=(0, 10))
+
+        self.lbl_pred = tk.Label(
+            self.banner_sim,
+            text="Ejecuta una simulación",
+            font=("Segoe UI", 18, "bold"),
+            bg=BLANCO,
+            fg=ROJO_UTP,
+            justify="left"
+        )
+        self.lbl_pred.pack(anchor="w", padx=16, pady=(12, 2), fill="x")
+
+        self.lbl_estado = tk.Label(
+            self.banner_sim,
+            text="El sistema calculará demanda, aulas, ocupación, cupos y recursos docentes.",
+            font=("Segoe UI", 10),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            justify="left"
+        )
+        self.lbl_estado.pack(anchor="w", padx=16, pady=(0, 12), fill="x")
+
+        self.banner_sim.bind(
+            "<Configure>",
+            lambda e: (
+                self.lbl_pred.configure(wraplength=max(350, e.width - 40)),
+                self.lbl_estado.configure(wraplength=max(350, e.width - 40))
+            )
+        )
+
+        # KPIs en 2x2 para evitar textos cortados.
+        self.frame_kpis_sim = tk.Frame(self.resultado_content_sim, bg=GRIS_FONDO)
+        self.frame_kpis_sim.pack(fill="x", pady=(0, 10))
+        self.frame_kpis_sim.columnconfigure(0, weight=1)
+        self.frame_kpis_sim.columnconfigure(1, weight=1)
+
+        self.sim_kpi_labels = {}
+        self._crear_card_sim(self.frame_kpis_sim, "Demanda IA", "---", "demanda")
+        self._crear_card_sim(self.frame_kpis_sim, "Demanda a planificar", "---", "planificacion")
+        self._crear_card_sim(self.frame_kpis_sim, "Aulas recomendadas", "---", "aulas")
+        self._crear_card_sim(self.frame_kpis_sim, "Ocupación promedio", "---", "ocupacion")
+
+        # Resultado central en vertical: gráfico arriba, tabla abajo.
+        self.panel_grafico_sim = tk.Frame(self.resultado_content_sim, bg=BLANCO, bd=1, relief="solid")
+        self.panel_grafico_sim.pack(fill="both", expand=False, pady=(0, 10))
+
+        self.panel_tabla_sim = tk.Frame(self.resultado_content_sim, bg=BLANCO, bd=1, relief="solid")
+        self.panel_tabla_sim.pack(fill="both", expand=True, pady=(0, 5))
+
+        tk.Label(
+            self.panel_tabla_sim,
+            text="Distribución sugerida por sección",
+            font=FUENTE_SUBTITULO,
+            bg=BLANCO,
+            fg=NEGRO
+        ).pack(anchor="w", padx=15, pady=(12, 5))
+
+        columnas = ("seccion", "aula", "capacidad", "alumnos", "ocupacion", "estado")
+        self.tree_secciones = ttk.Treeview(
+            self.panel_tabla_sim,
+            columns=columnas,
+            show="headings",
+            height=6
+        )
+
+        encabezados = {
+            "seccion": "Sección",
+            "aula": "Aula",
+            "capacidad": "Capacidad",
+            "alumnos": "Alumnos",
+            "ocupacion": "Ocupación",
+            "estado": "Estado"
+        }
+
+        anchos = {
+            "seccion": 70,
+            "aula": 90,
+            "capacidad": 90,
+            "alumnos": 90,
+            "ocupacion": 95,
+            "estado": 130
+        }
+
+        for col in columnas:
+            self.tree_secciones.heading(col, text=encabezados[col])
+            self.tree_secciones.column(col, anchor="center", width=anchos[col], stretch=True)
+
+        scroll_y = ttk.Scrollbar(self.panel_tabla_sim, orient="vertical", command=self.tree_secciones.yview)
+        self.tree_secciones.configure(yscrollcommand=scroll_y.set)
+        self.tree_secciones.pack(side="left", fill="both", expand=True, padx=(15, 0), pady=(5, 15))
+        scroll_y.pack(side="right", fill="y", padx=(0, 15), pady=(5, 15))
+
+        # =========================
+        # INFORME DETALLADO CON SCROLL
+        # =========================
+        self.container_scroll = tk.Frame(self.f_res_container, bg=BLANCO, bd=1, relief="solid")
+        canvas = tk.Canvas(self.container_scroll, bg=BLANCO, highlightthickness=0, yscrollincrement=18)
+        scrollbar = tk.Scrollbar(
+            self.container_scroll,
+            orient="vertical",
+            command=canvas.yview,
+            width=18,
+            bd=1,
+            relief="solid",
+            bg=ROJO_UTP,
+            activebackground=ROJO_CLARO,
+            troughcolor="#E0E0E0"
+        )
+        self.panel_detalle = tk.Frame(canvas, bg=BLANCO)
+
+        detalle_window = canvas.create_window((0, 0), window=self.panel_detalle, anchor="nw")
+        self.panel_detalle.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(detalle_window, width=e.width))
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self._habilitar_scroll_mouse(canvas)
+
+        tk.Label(
+            self.panel_detalle,
+            text="Informe técnico de simulación",
+            font=("Segoe UI", 22, "bold"),
+            bg=BLANCO,
+            fg=ROJO_UTP
+        ).pack(anchor="w", padx=25, pady=(20, 5))
+
+        self.lbl_detalle = tk.Message(
+            self.panel_detalle,
+            text="Ejecuta una simulación para generar el informe operativo.",
+            font=("Segoe UI", 11),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            width=850,
+            justify="left"
+        )
+        self.lbl_detalle.pack(anchor="w", padx=25, pady=10, fill="x")
+
+        self.panel_detalle.bind(
+            "<Configure>",
+            lambda e: self.lbl_detalle.configure(width=max(360, e.width - 60))
+        )
+
+        tk.Button(
+            self.panel_detalle,
+            text="Volver al resultado 🔙",
+            font=FUENTE_NORMAL,
+            bg=NEGRO,
+            fg=BLANCO,
+            activebackground=GRIS_TEXTO,
+            activeforeground=BLANCO,
+            bd=0,
+            padx=20,
+            pady=8,
+            cursor="hand2",
+            command=self.volver_resultado
+        ).pack(anchor="w", padx=25, pady=(5, 25))
+
+        # =========================
+        # GUÍA CON SCROLL Y TEXTO RESPONSIVO
+        # =========================
+        self.panel_guia_sim = tk.Frame(self.f_res_container, bg=BLANCO, bd=1, relief="solid")
+        canvas_guia = tk.Canvas(self.panel_guia_sim, bg=BLANCO, highlightthickness=0, yscrollincrement=18)
+        scrollbar_guia = tk.Scrollbar(
+            self.panel_guia_sim,
+            orient="vertical",
+            command=canvas_guia.yview,
+            width=18,
+            bd=1,
+            relief="solid",
+            bg=ROJO_UTP,
+            activebackground=ROJO_CLARO,
+            troughcolor="#E0E0E0"
+        )
+        guia_content = tk.Frame(canvas_guia, bg=BLANCO)
+
+        guia_window = canvas_guia.create_window((0, 0), window=guia_content, anchor="nw")
+        guia_content.bind("<Configure>", lambda e: canvas_guia.configure(scrollregion=canvas_guia.bbox("all")))
+        canvas_guia.bind("<Configure>", lambda e: canvas_guia.itemconfig(guia_window, width=e.width))
+        canvas_guia.configure(yscrollcommand=scrollbar_guia.set)
+        canvas_guia.pack(side="left", fill="both", expand=True)
+        scrollbar_guia.pack(side="right", fill="y")
+        self._habilitar_scroll_mouse(canvas_guia)
+
+        tk.Label(
+            guia_content,
+            text="Guía del simulador",
+            font=("Segoe UI", 22, "bold"),
+            bg=BLANCO,
+            fg=ROJO_UTP,
+            justify="left"
+        ).pack(anchor="w", padx=25, pady=(20, 8), fill="x")
+
+        txt_guia = (
+            "Este módulo convierte la predicción de matrícula en una decisión de infraestructura.\n\n"
+            "1) Predicción IA:\n"
+            "Usa el modelo entrenado con alumnos nuevos, prerrequisitos, repitentes, docente disponible, "
+            "capacidad, duración y laboratorio.\n\n"
+            "2) Escenario de planificación:\n"
+            "• Conservador (+MAE): suma el margen de error promedio para reducir riesgo de falta de cupos.\n"
+            "• Base IA: usa directamente la predicción central del modelo.\n"
+            "• Optimista (-MAE): reduce el margen para escenarios de menor demanda.\n\n"
+            "3) Capacidad efectiva:\n"
+            "Si el curso requiere laboratorio, la capacidad se reduce 15% por equipos, movilidad y seguridad.\n\n"
+            "4) Aulas recomendadas:\n"
+            "No solo se calcula el mínimo por aforo. También se usa una ocupación segura del 90%, "
+            "para evitar aulas al límite.\n\n"
+            "5) Docentes requeridos:\n"
+            "Se asume 1 docente por sección. Si faltan docentes, el estado operativo se marca como crítico.\n\n"
+            "6) Distribución sugerida:\n"
+            "Reparte la demanda de planificación entre las secciones recomendadas para facilitar la asignación."
+        )
+
+        self.lbl_guia_sim = tk.Message(
+            guia_content,
+            text=txt_guia,
+            font=("Segoe UI", 11),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            width=850,
+            justify="left"
+        )
+        self.lbl_guia_sim.pack(anchor="w", padx=25, pady=10, fill="x")
+
+        guia_content.bind(
+            "<Configure>",
+            lambda e: self.lbl_guia_sim.configure(width=max(360, e.width - 60))
+        )
+
+        tk.Button(
+            guia_content,
+            text="Volver al simulador 🔙",
+            font=FUENTE_NORMAL,
+            bg=NEGRO,
+            fg=BLANCO,
+            activebackground=GRIS_TEXTO,
+            activeforeground=BLANCO,
+            bd=0,
+            padx=20,
+            pady=8,
+            cursor="hand2",
+            command=self.volver_resultado
+        ).pack(anchor="w", padx=25, pady=(5, 25))
+
+        self.mostrar_guia_sim = False
+        self.mostrar_detalle = False
+
+        # Estado inicial útil para exposición.
+        self._render_grafico_simulacion(0, 0, 0, 40)
+        self.tree_secciones.insert("", "end", values=("-", "Ejecutar", "-", "-", "-", "-"))
+        self.realizar_prediccion()
+
+    def _habilitar_scroll_mouse(self, canvas):
+        """Activa desplazamiento con rueda del mouse en paneles Canvas con scrollbar visible."""
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_linux_scroll_up(event):
+            canvas.yview_scroll(-1, "units")
+
+        def _on_linux_scroll_down(event):
+            canvas.yview_scroll(1, "units")
+
+        def _bind_scroll(_event):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            canvas.bind_all("<Button-4>", _on_linux_scroll_up)
+            canvas.bind_all("<Button-5>", _on_linux_scroll_down)
+
+        def _unbind_scroll(_event):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        canvas.bind("<Enter>", _bind_scroll)
+        canvas.bind("<Leave>", _unbind_scroll)
+
+    def _crear_input_sim(self, parent, fila, etiqueta, variable, minimo, maximo, ayuda):
+        """Crea una entrada numérica uniforme para el formulario de simulación."""
+        tk.Label(
+            parent,
+            text=etiqueta,
+            font=("Segoe UI", 10),
+            bg=BLANCO,
+            fg=NEGRO
+        ).grid(row=fila, column=0, sticky="w", padx=12, pady=(7, 0))
+
+        spin = tk.Spinbox(
+            parent,
+            from_=minimo,
+            to=maximo,
+            textvariable=variable,
+            width=7,
+            font=("Segoe UI", 10),
+            justify="center"
+        )
+        spin.grid(row=fila, column=1, sticky="e", padx=(0, 12), pady=(7, 0))
+        fila += 1
+
+        tk.Label(
+            parent,
+            text=ayuda,
+            font=("Segoe UI", 8),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            wraplength=280,
+            justify="left"
+        ).grid(row=fila, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 4))
+        fila += 1
+        return fila
+
+    def _crear_card_sim(self, parent, titulo, valor, clave):
+        """Crea una tarjeta KPI compacta para la simulación en una grilla 2x2."""
+        index = len(self.sim_kpi_labels)
+        fila = index // 2
+        columna = index % 2
+
+        card = tk.Frame(parent, bg=BLANCO, bd=1, relief="solid", height=82)
+        card.grid(row=fila, column=columna, sticky="nsew", padx=5, pady=5)
+        card.grid_propagate(False)
+
+        tk.Label(
+            card,
+            text=titulo,
+            font=("Segoe UI", 9),
+            bg=BLANCO,
+            fg=GRIS_TEXTO,
+            wraplength=230,
+            justify="center"
+        ).pack(pady=(10, 1), fill="x")
+
+        lbl = tk.Label(
+            card,
+            text=valor,
+            font=("Segoe UI", 17, "bold"),
+            bg=BLANCO,
+            fg=ROJO_UTP
+        )
+        lbl.pack()
+
+        self.sim_kpi_labels[clave] = lbl
+
+    def _restablecer_simulacion(self):
+        """Restablece valores razonables para una simulación base."""
+        self.vars_input["alumnos_nuevos"].set(25)
+        self.vars_input["alumnos_prerrequisito"].set(20)
+        self.vars_input["alumnos_repitentes"].set(8)
+        self.vars_input["capacidad_aula"].set(40)
+        self.vars_input["duracion_semanas"].set(12)
+        self.vars_input["docentes_disponibles"].set(2)
+        self.vars_input["laboratorio"].set(0)
+        self.combo_escenario_sim.set("Conservador (+MAE)")
+        self.realizar_prediccion()
+
+    def _mostrar_panel_simulacion(self, panel):
+        """Muestra uno de los paneles derechos sin destruir el estado de la vista."""
+        for p in [self.panel_resultado_sim, self.container_scroll, self.panel_guia_sim]:
+            p.pack_forget()
+        panel.pack(fill="both", expand=True)
+
+    def toggle_detalles(self):
+        self._mostrar_panel_simulacion(self.container_scroll)
+        self.mostrar_detalle = True
+        self.mostrar_guia_sim = False
+
+    def volver_resultado(self):
+        self._mostrar_panel_simulacion(self.panel_resultado_sim)
+        self.mostrar_detalle = False
+        self.mostrar_guia_sim = False
+
+    def toggle_guia_simulacion(self):
+        if self.mostrar_guia_sim:
+            self.volver_resultado()
+        else:
+            self._mostrar_panel_simulacion(self.panel_guia_sim)
+            self.mostrar_guia_sim = True
+            self.mostrar_detalle = False
+
+    def _clasificar_ocupacion(self, ratio):
+        """Devuelve estado textual y color según ocupación."""
+        if ratio > 1:
+            return "Excede aforo", COLOR_SOBREPOBLADO
+        if ratio >= 0.90:
+            return "Ajustado", "#B8860B"
+        if ratio >= 0.65:
+            return "Óptimo", COLOR_OPTIMO
+        if ratio >= 0.45:
+            return "Baja ocupación", "#B8860B"
+        return "Subutilizado", COLOR_SUBUTILIZADO
+
+    def _render_grafico_simulacion(self, demanda_base, demanda_plan, cupos_planificados, capacidad_aula):
+        """Renderiza gráfico comparativo de demanda y capacidad planificada."""
+        for widget in self.panel_grafico_sim.winfo_children():
+            widget.destroy()
+
+        fig_prev = getattr(self, "_fig_simulacion", None)
+        if fig_prev is not None:
+            plt.close(fig_prev)
+
+        self._fig_simulacion, ax = plt.subplots(figsize=(7.6, 3.15))
+        self._fig_simulacion.patch.set_facecolor(BLANCO)
+
+        etiquetas = ["IA", "Planificada", "Cupos"]
+        valores = [demanda_base, demanda_plan, cupos_planificados]
+        colores = [ROJO_UTP, ROJO_CLARO, COLOR_OPTIMO]
+
+        barras = ax.bar(etiquetas, valores, color=colores, alpha=0.88, width=0.55)
+
+        limite_superior = max(max(valores + [capacidad_aula]) * 1.25, capacidad_aula + 10)
+        for barra, valor in zip(barras, valores):
+            ax.text(
+                barra.get_x() + barra.get_width() / 2,
+                barra.get_height() + limite_superior * 0.02,
+                f"{int(valor)}",
+                ha="center",
+                va="bottom",
+                fontsize=10,
+                fontweight="bold"
+            )
+
+        ax.axhline(y=capacidad_aula, linestyle="--", linewidth=1.2, color=GRIS_TEXTO, alpha=0.7)
+        ax.text(
+            -0.35,
+            capacidad_aula + limite_superior * 0.025,
+            f"Capacidad por aula: {capacidad_aula}",
+            fontsize=9,
+            color=GRIS_TEXTO
+        )
+
+        ax.set_title("Demanda vs capacidad operativa", fontsize=13, pad=10)
+        ax.set_ylabel("Alumnos / cupos", fontsize=10)
+        ax.set_ylim(0, limite_superior)
+        ax.tick_params(axis="x", labelsize=10)
+        ax.grid(True, axis="y", linestyle="--", alpha=0.35)
+        ax.set_facecolor("#F9F9F9")
+        plt.tight_layout(pad=1.5)
+
+        canvas = FigureCanvasTkAgg(self._fig_simulacion, master=self.panel_grafico_sim)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=8)
+
+    def realizar_prediccion(self):
+        try:
+            # =========================
+            # 1. LECTURA Y VALIDACIÓN
+            # =========================
+            alumnos_nuevos = int(self.vars_input["alumnos_nuevos"].get())
+            alumnos_pre = int(self.vars_input["alumnos_prerrequisito"].get())
+            alumnos_rep = int(self.vars_input["alumnos_repitentes"].get())
+            capacidad = int(self.vars_input["capacidad_aula"].get())
+            duracion = int(self.vars_input["duracion_semanas"].get())
+            docentes_disponibles = int(self.vars_input["docentes_disponibles"].get())
+            laboratorio = int(self.vars_input["laboratorio"].get())
+
+            if min(alumnos_nuevos, alumnos_pre, alumnos_rep, capacidad, duracion, docentes_disponibles) < 0:
+                raise ValueError("No se permiten valores negativos.")
+            if capacidad <= 0:
+                raise ValueError("La capacidad del aula debe ser mayor a cero.")
+            if duracion <= 0:
+                raise ValueError("La duración debe ser mayor a cero.")
+            if laboratorio not in [0, 1]:
+                laboratorio = 1 if laboratorio else 0
+
+            turno = self.combo_turno_sim.get()
+            pabellon = self.combo_pabellon_sim.get()
+            escenario = self.combo_escenario_sim.get()
+
+            # El modelo entrenó con docente_disponible como variable binaria.
+            docente_disponible_modelo = 1 if docentes_disponibles > 0 else 0
+
+            # =========================
+            # 2. PREDICCIÓN IA
+            # =========================
+            datos_prediccion = pd.DataFrame([{
+                "alumnos_nuevos": alumnos_nuevos,
+                "alumnos_prerrequisito": alumnos_pre,
+                "alumnos_repitentes": alumnos_rep,
+                "docente_disponible": docente_disponible_modelo,
+                "capacidad_aula": capacidad,
+                "duracion_semanas": duracion,
+                "laboratorio": laboratorio
+            }])
+
+            pred_base = int(round(float(self.modelo_activo.predict(datos_prediccion)[0])))
+            pred_base = max(0, pred_base)
+
+            mae = float(self.modelos["Regresión Lineal Múltiple"]["MAE"])
+            pred_min = max(0, int(np.floor(pred_base - mae)))
+            pred_max = max(pred_base, int(np.ceil(pred_base + mae)))
+
+            if escenario == "Optimista (-MAE)":
+                demanda_plan = pred_min
+            elif escenario == "Base IA":
+                demanda_plan = pred_base
+            else:
+                demanda_plan = pred_max
+
+            demanda_plan = max(1, int(demanda_plan))
+
+            # =========================
+            # 3. CAPACIDAD Y SECCIONES
+            # =========================
+            factor_laboratorio = 0.85 if laboratorio == 1 else 1.00
+            capacidad_efectiva = max(1, int(np.floor(capacidad * factor_laboratorio)))
+
+            # Se recomienda no planificar al 100% de ocupación.
+            capacidad_segura = max(1, int(np.floor(capacidad_efectiva * 0.90)))
+
+            aulas_minimas = max(1, int(np.ceil(demanda_plan / capacidad_efectiva)))
+            aulas_recomendadas = max(1, int(np.ceil(demanda_plan / capacidad_segura)))
+            capacidad_total = aulas_recomendadas * capacidad_efectiva
+            ocupacion_promedio = demanda_plan / capacidad_total
+            cupos_libres = capacidad_total - demanda_plan
+
+            docentes_necesarios = aulas_recomendadas
+            deficit_docentes = max(0, docentes_necesarios - docentes_disponibles)
+
+            saturacion_sin_plan = pred_base / capacidad_efectiva
+            exceso_sin_plan = max(0, pred_base - capacidad_efectiva)
+
+            estado_ocupacion, color_ocupacion = self._clasificar_ocupacion(ocupacion_promedio)
+
+            if deficit_docentes > 0:
+                estado_general = "🔴 CRÍTICO OPERATIVO"
+                color_estado = COLOR_SOBREPOBLADO
+                recomendacion = (
+                    f"Faltan {deficit_docentes} docente(s). Asignar docentes adicionales, "
+                    "abrir otro turno o reducir la cantidad de secciones planificadas."
+                )
+            elif ocupacion_promedio > 1:
+                estado_general = "🔴 CRÍTICO POR AFORO"
+                color_estado = COLOR_SOBREPOBLADO
+                recomendacion = "La demanda supera los cupos planificados. Abrir secciones adicionales."
+            elif ocupacion_promedio >= 0.90:
+                estado_general = "🟠 AJUSTADO"
+                color_estado = "#B8860B"
+                recomendacion = "La asignación es viable, pero queda con poco margen. Conviene monitorear matrícula."
+            elif ocupacion_promedio >= 0.65:
+                estado_general = "🟢 ÓPTIMO"
+                color_estado = COLOR_OPTIMO
+                recomendacion = "La carga está equilibrada. Se recomienda aprobar esta distribución."
+            elif ocupacion_promedio >= 0.45:
+                estado_general = "🟡 BAJA OCUPACIÓN"
+                color_estado = "#B8860B"
+                recomendacion = "Hay cupos libres relevantes. Evaluar fusión de secciones si la demanda real baja."
+            else:
+                estado_general = "🟡 SUBUTILIZADO"
+                color_estado = COLOR_SUBUTILIZADO
+                recomendacion = "Demasiada capacidad ociosa. Reducir secciones o reasignar aulas."
+
+            # =========================
+            # 4. EFICIENCIA ADMINISTRATIVA
+            # =========================
+            tiempo_hist = float(self.df["tiempo_matricula_min"].mean())
+            complejidad_operativa = 1 + max(0, aulas_recomendadas - 1) * 0.08 + (0.05 if laboratorio == 1 else 0)
+            tiempo_sin_ia = tiempo_hist * complejidad_operativa
+            tiempo_con_ia = tiempo_sin_ia * 0.70
+            mejora = ((tiempo_sin_ia - tiempo_con_ia) / tiempo_sin_ia) * 100
+
+            # Riesgo académico estimado según saturación sin planificación.
+            if saturacion_sin_plan > 1:
+                alumnos_riesgo = int(np.ceil(exceso_sin_plan * 0.60))
+                riesgo_texto = "alto si se mantiene una sola aula"
+            elif saturacion_sin_plan >= 0.90:
+                alumnos_riesgo = int(np.ceil(pred_base * 0.06))
+                riesgo_texto = "moderado por ocupación ajustada"
+            else:
+                alumnos_riesgo = int(np.ceil(pred_base * 0.03))
+                riesgo_texto = "bajo"
+
+            # =========================
+            # 5. ACTUALIZAR KPIs
+            # =========================
+            self.lbl_pred.config(
+                text=f"{estado_general} — {demanda_plan} alumnos a planificar",
+                fg=color_estado
+            )
+
+            self.lbl_estado.config(
+                text=(
+                    f"Predicción base: {pred_base} | Intervalo operativo: {pred_min}–{pred_max} | "
+                    f"Turno: {turno} | Pabellón: {pabellon} | {recomendacion}"
+                ),
+                fg=GRIS_TEXTO
+            )
+
+            self.sim_kpi_labels["demanda"].config(text=f"{pred_base}", fg=ROJO_UTP)
+            self.sim_kpi_labels["planificacion"].config(text=f"{demanda_plan}", fg=ROJO_UTP)
+            self.sim_kpi_labels["aulas"].config(text=f"{aulas_recomendadas}", fg=color_estado)
+            self.sim_kpi_labels["ocupacion"].config(text=f"{ocupacion_promedio*100:.1f}%", fg=color_estado)
+
+            # =========================
+            # 6. TABLA DE DISTRIBUCIÓN
+            # =========================
+            for item in self.tree_secciones.get_children():
+                self.tree_secciones.delete(item)
+
+            base_por_seccion = demanda_plan // aulas_recomendadas
+            resto = demanda_plan % aulas_recomendadas
+
+            distribucion = []
+            for i in range(aulas_recomendadas):
+                alumnos_seccion = base_por_seccion + (1 if i < resto else 0)
+                ratio = alumnos_seccion / capacidad_efectiva
+                estado_sec, _ = self._clasificar_ocupacion(ratio)
+                aula_sugerida = f"{pabellon}-{i+1:02d}"
+                distribucion.append((i + 1, aula_sugerida, capacidad_efectiva, alumnos_seccion, ratio, estado_sec))
+
+                self.tree_secciones.insert(
+                    "",
+                    "end",
+                    values=(
+                        f"S{i+1}",
+                        aula_sugerida,
+                        capacidad_efectiva,
+                        alumnos_seccion,
+                        f"{ratio*100:.1f}%",
+                        estado_sec
+                    )
+                )
+
+            # =========================
+            # 7. GRÁFICO
+            # =========================
+            self._render_grafico_simulacion(
+                demanda_base=pred_base,
+                demanda_plan=demanda_plan,
+                cupos_planificados=capacidad_total,
+                capacidad_aula=capacidad_efectiva
+            )
+
+            # =========================
+            # 8. INFORME DETALLADO
+            # =========================
+            lab_texto = "Sí, capacidad reducida al 85%" if laboratorio == 1 else "No, capacidad completa"
+
+            detalle = f"""
+📊 RESULTADO EJECUTIVO
+
+Estado general:
+{estado_general}
+
+Recomendación:
+{recomendacion}
+
+📌 DEMANDA ESTIMADA
+
+• Predicción base del modelo IA: {pred_base} alumnos
+• Margen de error usado (MAE): ± {mae:.2f} alumnos
+• Intervalo operativo estimado: {pred_min} a {pred_max} alumnos
+• Escenario seleccionado: {escenario}
+• Demanda usada para planificación: {demanda_plan} alumnos
+
+🏫 PLANIFICACIÓN DE AULAS
+
+• Capacidad física por aula: {capacidad} alumnos
+• Laboratorio: {lab_texto}
+• Capacidad efectiva por aula: {capacidad_efectiva} alumnos
+• Capacidad segura usada para planificación: {capacidad_segura} alumnos por aula
+• Aulas mínimas por aforo: {aulas_minimas}
+• Aulas recomendadas: {aulas_recomendadas}
+• Cupos planificados totales: {capacidad_total}
+• Cupos libres proyectados: {cupos_libres}
+• Ocupación promedio: {ocupacion_promedio*100:.1f}% ({estado_ocupacion})
+
+👨‍🏫 RECURSOS DOCENTES
+
+• Docentes disponibles: {docentes_disponibles}
+• Docentes requeridos: {docentes_necesarios}
+• Déficit docente: {deficit_docentes}
+
+⚠️ RIESGO SIN PLANIFICACIÓN
+
+• Saturación si solo se usara 1 aula: {saturacion_sin_plan:.2f}
+• Exceso estimado sobre una sola aula: {exceso_sin_plan} alumno(s)
+• Alumnos en riesgo operativo: {alumnos_riesgo} ({riesgo_texto})
+
+⏱️ EFICIENCIA ADMINISTRATIVA
+
+• Tiempo histórico promedio de matrícula: {tiempo_hist:.1f} min
+• Tiempo estimado sin asistencia IA: {tiempo_sin_ia:.1f} min
+• Tiempo estimado con asistencia IA: {tiempo_con_ia:.1f} min
+• Mejora administrativa estimada: {mejora:.1f}%
+
+📚 INTERPRETACIÓN DE VARIABLES
+
+• Alumnos nuevos: {alumnos_nuevos}
+• Alumnos con prerrequisito: {alumnos_pre}
+• Alumnos repitentes: {alumnos_rep}
+• Duración del curso: {duracion} semanas
+• Turno referencial: {turno}
+• Pabellón referencial: {pabellon}
+
+🧩 DISTRIBUCIÓN SUGERIDA
+
+"""
+
+            for seccion, aula, cap, alumnos, ratio, estado_sec in distribucion:
+                detalle += f"• Sección S{seccion} → Aula {aula}: {alumnos}/{cap} alumnos ({ratio*100:.1f}%) - {estado_sec}\n"
+
+            self.lbl_detalle.config(text=detalle.strip())
+
+            # Al ejecutar, volver automáticamente al resultado principal.
+            self.volver_resultado()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Datos inválidos o incompletos.\n\nDetalle técnico: {e}")
+
+
+
+    # ==============================
+    # GA #1 — VISTA DEDICADA
+    # ==============================
+    def vista_ga1_variables(self):
+        self.limpiar_contenedor()
+
+        header = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        header.pack(fill="x", pady=(18, 5), padx=28)
+
+        tk.Label(header, text="AG #1 — Selección Óptima de Variables Predictoras",
+                 font=("Segoe UI", 22, "bold"), bg=GRIS_FONDO, fg=NEGRO).pack(side="left")
+
+        self.btn_ga1 = tk.Button(
+            header, text="Ejecutar AG #1 🧬",
+            font=FUENTE_NORMAL, bg=ROJO_UTP, fg=BLANCO,
+            activebackground=ROJO_CLARO, activeforeground=BLANCO,
+            bd=0, padx=14, pady=8, cursor="hand2",
+            command=self._ejecutar_ga1
+        )
+        self.btn_ga1.pack(side="right")
+
+        mae_base = self.modelos["Regresión Lineal Múltiple"]["MAE"]
+        n_cand = len([c for c in COLUMNAS_FEATURES_GA if c in self.df.columns])
+
+        tk.Label(
+            self.contenedor_principal,
+            text=(f"Busca el subconjunto óptimo de {n_cand} variables candidatas que minimiza el MAE "
+                  f"del modelo Ridge (split 80/20). MAE base del modelo actual: ±{mae_base:.2f} alumnos."),
+            font=("Segoe UI", 10), bg=GRIS_FONDO, fg=GRIS_TEXTO, wraplength=1200, justify="left"
+        ).pack(anchor="w", padx=30, pady=(0, 4))
+
+        self.lbl_ga1_estado = tk.Label(
+            self.contenedor_principal,
+            text="Estado: No ejecutado — presiona 'Ejecutar AG #1 🧬' para iniciar.",
+            font=("Segoe UI", 10, "italic"), bg=GRIS_FONDO, fg=GRIS_TEXTO
+        )
+        self.lbl_ga1_estado.pack(anchor="w", padx=30, pady=(0, 12))
+
+        # Panel de candidatas y resultado
+        cuerpo = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        cuerpo.pack(fill="both", expand=True, padx=28, pady=(0, 18))
+        cuerpo.columnconfigure(0, weight=1)
+        cuerpo.columnconfigure(1, weight=1)
+        cuerpo.rowconfigure(0, weight=1)
+
+        # Izquierda: variables candidatas
+        f_cand = tk.LabelFrame(cuerpo, text="Variables Candidatas (cromosoma)",
+                               font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO, padx=10, pady=10)
+        f_cand.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+
+        for col in COLUMNAS_FEATURES_GA:
+            presente = col in self.df.columns
+            color = NEGRO if presente else "#BDBDBD"
+            tk.Label(f_cand, text=f"{'●' if presente else '○'}  {col}",
+                     font=("Segoe UI", 10), bg=BLANCO, fg=color,
+                     anchor="w").pack(fill="x", pady=1)
+
+        # Derecha: resultado
+        f_res = tk.LabelFrame(cuerpo, text="Resultado del AG",
+                              font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO, padx=10, pady=10)
+        f_res.grid(row=0, column=1, sticky="nsew")
+
+        if self.ga_features_resultado:
+            mejora = mae_base - self.ga_mae_resultado
+            signo = "↓" if mejora >= 0 else "↑"
+            color_r = COLOR_OPTIMO if mejora >= 0 else COLOR_SOBREPOBLADO
+            tk.Label(f_res, text="Variables seleccionadas por el AG:",
+                     font=("Segoe UI", 11, "bold"), bg=BLANCO, fg=NEGRO).pack(anchor="w", pady=(0, 4))
+            for feat in self.ga_features_resultado:
+                tk.Label(f_res, text=f"  ✔  {feat}",
+                         font=("Segoe UI", 10), bg=BLANCO, fg=COLOR_OPTIMO).pack(anchor="w")
+            tk.Label(f_res,
+                     text=f"\nMAE AG: ±{self.ga_mae_resultado:.2f}  vs  MAE base: ±{mae_base:.2f}",
+                     font=("Segoe UI", 12, "bold"), bg=BLANCO, fg=color_r).pack(anchor="w", pady=(10, 2))
+            tk.Label(f_res,
+                     text=f"Cambio: {signo}{abs(mejora):.2f} alumnos",
+                     font=("Segoe UI", 11), bg=BLANCO, fg=color_r).pack(anchor="w")
+        else:
+            tk.Label(f_res,
+                     text="Ejecuta el AG para ver qué variables\nselecciona el algoritmo genético.",
+                     font=("Segoe UI", 11, "italic"), bg=BLANCO, fg=GRIS_TEXTO,
+                     justify="left").pack(anchor="w", pady=20)
+
+    # ==============================
+    # GA #1 — LÓGICA DE UI
+    # ==============================
+    def _ejecutar_ga1(self):
+        try:
+            self.btn_ga1.config(state="disabled")
+            self.lbl_ga1_estado.config(
+                text="⚙️ Ejecutando AG... buscando subconjunto óptimo de variables.",
+                fg="#B8860B"
+            )
+            self.root.update_idletasks()
+        except tk.TclError:
+            return
+
+        def _run():
+            features, mae = ga_seleccion_variables(self.df)
+            mae_base = self.modelos["Regresión Lineal Múltiple"]["MAE"]
+            self.ga_features_resultado = features
+            self.ga_mae_resultado = mae
+            self.root.after(0, lambda: self._actualizar_ga1_ui(features, mae, mae_base))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _actualizar_ga1_ui(self, features, mae_ga, mae_base):
+        try:
+            self.btn_ga1.config(state="normal")
+            mejora = mae_base - mae_ga
+            signo = "↓" if mejora >= 0 else "↑"
+            color = COLOR_OPTIMO if mejora >= 0 else "#B8860B"
+            self.lbl_ga1_estado.config(
+                text=(f"✔ Completado — {len(features)} variables seleccionadas | "
+                      f"MAE AG: ±{mae_ga:.2f}  vs  MAE base: ±{mae_base:.2f}  →  "
+                      f"Cambio: {signo}{abs(mejora):.2f} alumnos"),
+                fg=color
+            )
+            # Refresca el panel de resultados recargando la vista
+            self.vista_ga1_variables()
+        except tk.TclError:
+            pass
+
+    # ==============================
+    # GA #2 — VISTA DEDICADA
+    # ==============================
+    def vista_ga2_secciones(self):
+        self.limpiar_contenedor()
+
+        header = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        header.pack(fill="x", pady=(18, 5), padx=28)
+
+        tk.Label(header, text="AG #2 — Optimización de Distribución de Secciones",
+                 font=("Segoe UI", 22, "bold"), bg=GRIS_FONDO, fg=NEGRO).pack(side="left")
+
+        self.btn_ga2 = tk.Button(
+            header, text="Ejecutar AG #2 🧬",
+            font=FUENTE_NORMAL, bg=ROJO_UTP, fg=BLANCO,
+            activebackground=ROJO_CLARO, activeforeground=BLANCO,
+            bd=0, padx=14, pady=8, cursor="hand2",
+            command=self._ejecutar_ga2
+        )
+        self.btn_ga2.pack(side="right")
+
+        tk.Label(
+            self.contenedor_principal,
+            text="Optimiza el número de secciones y el factor de ocupación para minimizar hacinamiento y subutilización.",
+            font=("Segoe UI", 10), bg=GRIS_FONDO, fg=GRIS_TEXTO
+        ).pack(anchor="w", padx=30, pady=(0, 10))
+
+        cuerpo = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        cuerpo.pack(fill="both", expand=True, padx=28, pady=(0, 18))
+        cuerpo.columnconfigure(0, weight=0, minsize=380)
+        cuerpo.columnconfigure(1, weight=1)
+        cuerpo.rowconfigure(0, weight=1)
+
+        # Izquierda: formulario de parámetros
+        f_form = tk.LabelFrame(cuerpo, text="Parámetros de entrada",
+                               font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO, padx=14, pady=14)
+        f_form.grid(row=0, column=0, sticky="ns", padx=(0, 16))
+
+        cap_base = int(round(float(self.df["capacidad_aula"].median()))) if "capacidad_aula" in self.df.columns else 40
+        self.ga2_vars = {
+            "demanda":    tk.IntVar(value=60),
+            "capacidad":  tk.IntVar(value=cap_base),
+            "docentes":   tk.IntVar(value=3),
+            "laboratorio": tk.IntVar(value=0),
+        }
+
+        campos = [
+            ("Demanda total a distribuir", "demanda",    1, 300),
+            ("Capacidad por aula",         "capacidad",  1, 120),
+            ("Docentes disponibles",       "docentes",   0,  20),
+        ]
+        for fila, (label, key, mn, mx) in enumerate(campos):
+            tk.Label(f_form, text=label, font=FUENTE_NORMAL, bg=BLANCO, fg=NEGRO
+                     ).grid(row=fila * 2, column=0, sticky="w", pady=(8, 0))
+            tk.Spinbox(f_form, from_=mn, to=mx, textvariable=self.ga2_vars[key],
+                       width=7, font=("Segoe UI", 10), justify="center"
+                       ).grid(row=fila * 2, column=1, sticky="e", pady=(8, 0))
+
+        tk.Label(f_form, text="Requiere laboratorio", font=FUENTE_NORMAL,
+                 bg=BLANCO, fg=NEGRO).grid(row=6, column=0, sticky="w", pady=(12, 0))
+        tk.Checkbutton(f_form, text="Sí (−15% capacidad)", variable=self.ga2_vars["laboratorio"],
+                       bg=BLANCO, fg=GRIS_TEXTO, font=("Segoe UI", 9)
+                       ).grid(row=6, column=1, sticky="e", pady=(12, 0))
+
+        # Derecha: resultados
+        f_res = tk.LabelFrame(cuerpo, text="Resultado del AG",
+                              font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO, padx=14, pady=14)
+        f_res.grid(row=0, column=1, sticky="nsew")
+
+        self.lbl_ga2_estado = tk.Label(
+            f_res,
+            text="Ejecuta el AG para ver la distribución óptima de secciones.",
+            font=("Segoe UI", 11, "italic"), bg=BLANCO, fg=GRIS_TEXTO,
+            wraplength=600, justify="left"
+        )
+        self.lbl_ga2_estado.pack(anchor="w", pady=(0, 10))
+
+        # KPIs resultado
+        self.frame_ga2_kpis = tk.Frame(f_res, bg=BLANCO)
+        self.frame_ga2_kpis.pack(fill="x", pady=(0, 12))
+
+        self.ga2_kpi_labels = {}
+        kpi_defs = [
+            ("Secciones (AG)",     "ag_sec"),
+            ("Secciones (Clásico)","cl_sec"),
+            ("Ocupación AG",       "ag_ocup"),
+            ("Total cupos AG",     "ag_cupos"),
+        ]
+        for idx, (titulo, clave) in enumerate(kpi_defs):
+            card = tk.Frame(self.frame_ga2_kpis, bg=BLANCO, bd=1, relief="solid", height=80)
+            card.grid(row=idx // 2, column=idx % 2, sticky="nsew", padx=5, pady=5)
+            card.grid_propagate(False)
+            self.frame_ga2_kpis.columnconfigure(idx % 2, weight=1)
+            tk.Label(card, text=titulo, font=("Segoe UI", 9), bg=BLANCO,
+                     fg=GRIS_TEXTO).pack(pady=(8, 1))
+            lbl = tk.Label(card, text="---", font=("Segoe UI", 17, "bold"),
+                           bg=BLANCO, fg=ROJO_UTP)
+            lbl.pack()
+            self.ga2_kpi_labels[clave] = lbl
+
+        self.lbl_ga2_detalle = tk.Label(
+            f_res, text="",
+            font=("Segoe UI", 10), bg=BLANCO, fg=GRIS_TEXTO,
+            wraplength=600, justify="left"
+        )
+        self.lbl_ga2_detalle.pack(anchor="w")
+
+    def _ejecutar_ga2(self):
+        try:
+            self.btn_ga2.config(state="disabled")
+            self.lbl_ga2_estado.config(text="⚙️ Ejecutando AG #2...", fg="#B8860B")
+            self.root.update_idletasks()
+        except tk.TclError:
+            return
+
+        demanda   = self.ga2_vars["demanda"].get()
+        capacidad = self.ga2_vars["capacidad"].get()
+        docentes  = self.ga2_vars["docentes"].get()
+        lab       = self.ga2_vars["laboratorio"].get()
+
+        cap_ef = max(1, int(capacidad * (0.85 if lab else 1.0)))
+        cap_cl = max(1, int(cap_ef * 0.90))
+        cl_sec = max(1, -(-demanda // cap_cl))  # ceil division
+
+        def _run():
+            res = ga_optimizar_secciones(demanda, cap_ef, docentes)
+            self.root.after(0, lambda: self._actualizar_ga2_ui(res, cl_sec, cap_ef))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _actualizar_ga2_ui(self, res, cl_sec, cap_ef):
+        try:
+            self.btn_ga2.config(state="normal")
+            ag_sec  = res["n_secciones"]
+            ag_ocup = res["ocupacion"]
+            ag_cupos = res["total_cupos"]
+
+            color_ocup = COLOR_OPTIMO if 0.65 <= ag_ocup <= 0.90 else "#B8860B"
+            comp = ("igual al clásico" if ag_sec == cl_sec
+                    else f"AG sugiere {ag_sec} vs clásico {cl_sec}")
+
+            self.ga2_kpi_labels["ag_sec"].config(text=str(ag_sec), fg=ROJO_UTP)
+            self.ga2_kpi_labels["cl_sec"].config(text=str(cl_sec), fg=GRIS_TEXTO)
+            self.ga2_kpi_labels["ag_ocup"].config(text=f"{ag_ocup*100:.1f}%", fg=color_ocup)
+            self.ga2_kpi_labels["ag_cupos"].config(text=str(ag_cupos), fg=ROJO_UTP)
+
+            self.lbl_ga2_estado.config(
+                text=f"✔ Completado — {comp}  |  Factor de ocupación óptimo: {res['factor_ocupacion']*100:.0f}%",
+                fg=COLOR_OPTIMO
+            )
+            self.lbl_ga2_detalle.config(
+                text=(f"Cap. efectiva por aula: {cap_ef}  |  Cap. segura AG: {res['cap_segura']}\n"
+                      f"Fitness AG: {res['fitness']:.1f}")
+            )
+        except tk.TclError:
+            pass
+
+    # ==============================
+    # GA #3 — VISTA Y LÓGICA
+    # ==============================
+    def vista_optimizador_horarios(self):
+        self.limpiar_contenedor()
+
+        header = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        header.pack(fill="x", pady=(18, 5), padx=28)
+
+        tk.Label(header, text="Optimizador de Horarios — Algoritmo Genético",
+                 font=("Segoe UI", 22, "bold"), bg=GRIS_FONDO, fg=NEGRO).pack(side="left")
+
+        self.btn_ejecutar_ga3 = tk.Button(
+            header, text="Ejecutar AG #3 🧬",
+            font=FUENTE_NORMAL, bg=ROJO_UTP, fg=BLANCO,
+            activebackground=ROJO_CLARO, activeforeground=BLANCO,
+            bd=0, padx=14, pady=8, cursor="hand2",
+            command=self._ejecutar_ga3
+        )
+        self.btn_ejecutar_ga3.pack(side="right")
+
+        tk.Label(
+            self.contenedor_principal,
+            text=("Asigna automáticamente los top 30 cursos más demandados a aulas y turnos, "
+                  "minimizando conflictos de aula, conflictos de docente y hacinamiento."),
+            font=("Segoe UI", 10), bg=GRIS_FONDO, fg=GRIS_TEXTO
+        ).pack(anchor="w", padx=30, pady=(0, 6))
+
+        self.lbl_ga3_estado = tk.Label(
+            self.contenedor_principal,
+            text="Estado: No ejecutado — presiona 'Ejecutar AG #3 🧬' para iniciar.",
+            font=("Segoe UI", 10, "italic"), bg=GRIS_FONDO, fg=GRIS_TEXTO
+        )
+        self.lbl_ga3_estado.pack(anchor="w", padx=30, pady=(0, 8))
+
+        frame_tabla_ga3 = tk.Frame(self.contenedor_principal, bg=BLANCO, bd=1, relief="solid")
+        frame_tabla_ga3.pack(fill="both", expand=True, padx=28, pady=(0, 18))
+
+        tk.Label(frame_tabla_ga3, text="Asignación Óptima de Cursos",
+                 font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO).pack(anchor="w", padx=20, pady=(12, 5))
+
+        cols_ga3 = ("curso", "aula_id", "pabellon", "turno", "demanda", "capacidad", "ocupacion", "estado")
+        anchos_ga3 = {"curso": 200, "aula_id": 80, "pabellon": 90, "turno": 90,
+                      "demanda": 80, "capacidad": 90, "ocupacion": 95, "estado": 130}
+        encabezados_ga3 = {"curso": "Curso", "aula_id": "Aula ID", "pabellon": "Pabellón",
+                           "turno": "Turno", "demanda": "Demanda", "capacidad": "Capacidad",
+                           "ocupacion": "Ocupación", "estado": "Estado"}
+
+        scroll_x_ga3 = ttk.Scrollbar(frame_tabla_ga3, orient="horizontal")
+        scroll_y_ga3 = ttk.Scrollbar(frame_tabla_ga3, orient="vertical")
+
+        self.tree_ga3 = ttk.Treeview(
+            frame_tabla_ga3, columns=cols_ga3, show="headings", height=20,
+            xscrollcommand=scroll_x_ga3.set, yscrollcommand=scroll_y_ga3.set
+        )
+        for col in cols_ga3:
+            self.tree_ga3.heading(col, text=encabezados_ga3[col])
+            self.tree_ga3.column(col, anchor="center", width=anchos_ga3[col], stretch=True)
+
+        scroll_x_ga3.config(command=self.tree_ga3.xview)
+        scroll_y_ga3.config(command=self.tree_ga3.yview)
+
+        self.tree_ga3.pack(side="left", fill="both", expand=True, padx=(15, 0), pady=(5, 15))
+        scroll_y_ga3.pack(side="right", fill="y", padx=(0, 5), pady=(5, 15))
+        scroll_x_ga3.pack(fill="x", padx=15, pady=(0, 5))
+
+    def _ejecutar_ga3(self):
+        try:
+            self.lbl_ga3_estado.config(
+                text="⚙️ Ejecutando AG #3... asignando cursos a (aula, turno).",
+                fg="#B8860B"
+            )
+            self.btn_ejecutar_ga3.config(state="disabled")
+            self.root.update_idletasks()
+        except tk.TclError:
+            return
+
+        def _run():
+            resumen, aulas, turnos, asignaciones, score = ga_horarios(self.df)
+            self.root.after(0, lambda: self._actualizar_ga3_ui(
+                resumen, aulas, turnos, asignaciones, score
+            ))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _actualizar_ga3_ui(self, resumen, aulas, turnos, asignaciones, score):
+        try:
+            self.btn_ejecutar_ga3.config(state="normal")
+            for item in self.tree_ga3.get_children():
+                self.tree_ga3.delete(item)
+
+            slot_count = {}
+            for ai, ti in asignaciones:
+                key = (ai, ti)
+                slot_count[key] = slot_count.get(key, 0) + 1
+            conflictos = sum(v - 1 for v in slot_count.values() if v > 1)
+
+            for i, (ai, ti) in enumerate(asignaciones):
+                curso = resumen["nombre_curso"].iloc[i]
+                dem = int(resumen["demanda"].iloc[i])
+                cap = int(aulas["capacidad_aula"].iloc[ai])
+                pab = str(aulas["pabellon"].iloc[ai])
+                turno = str(turnos[ti])
+                aula_id = str(aulas["aula_id"].iloc[ai])
+                ocup = dem / cap if cap > 0 else 2.0
+                estado, _ = self._clasificar_ocupacion(ocup)
+                self.tree_ga3.insert("", "end",
+                    values=(curso, aula_id, pab, turno, dem, cap,
+                            f"{ocup * 100:.1f}%", estado))
+
+            color_estado = COLOR_OPTIMO if conflictos == 0 else "#B8860B"
+            self.lbl_ga3_estado.config(
+                text=(f"✔ Completado — {len(asignaciones)} cursos asignados | "
+                      f"Conflictos de aula: {conflictos} | Fitness: {score:.0f}"),
+                fg=color_estado
+            )
+        except tk.TclError:
+            pass
+
+
+# ==============================
+# INICIALIZACIÓN
+# ==============================
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = AppDemandaAulas(root)
+    root.mainloop()
