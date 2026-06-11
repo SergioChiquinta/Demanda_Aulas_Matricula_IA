@@ -1,6 +1,8 @@
 ﻿import pandas as pd
 import mysql.connector
 import numpy as np
+import random
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 import matplotlib.pyplot as plt
@@ -85,6 +87,13 @@ COLUMNAS_NUMERICAS = [
     "laboratorio",
     "tiempo_matricula_min",
     "alumnos_matriculados",
+]
+
+COLUMNAS_FEATURES_GA = [
+    "ciclo_relativo", "creditos_curso", "docente_disponible", "capacidad_aula",
+    "alumnos_nuevos", "alumnos_prerrequisito", "alumnos_repitentes", "veces_llevado",
+    "carga_academica_proyectada", "cursos_comun", "duracion_semanas", "laboratorio",
+    "tiempo_matricula_min",
 ]
 
 # ==============================
@@ -175,175 +184,182 @@ def entrenar_modelos(X, y):
     return resultados
 
 # ==============================
-# ALGORITMO GENÉTICO (METAHEURÍSTICA)
+# ALGORITMOS GENÉTICOS
 # ==============================
-class OptimizadorGenetico:
-    def __init__(self, aulas, horarios, secciones, tam_poblacion=80, generaciones=100, tasa_cruce=0.8, tasa_mutacion=0.1):
-        self.aulas = aulas
-        self.horarios = horarios
-        self.secciones = secciones
-        self.tam_poblacion = tam_poblacion
-        self.generaciones = generaciones
-        self.tasa_cruce = tasa_cruce
-        self.tasa_mutacion = tasa_mutacion
-        
-        self.num_aulas = len(aulas)
-        self.num_horarios = len(horarios)
-        self.num_genes = len(secciones)
-        
-        # Mapeo de índices a (aula, horario)
-        self.espacio_soluciones = []
-        for i_aula in range(self.num_aulas):
-            for i_horario in range(self.num_horarios):
-                self.espacio_soluciones.append((i_aula, i_horario))
-                
-        self.tam_espacio = len(self.espacio_soluciones)
-        self.mejor_cromosoma = None
-        self.mejor_conflictos = []
 
-    def calcular_fitness(self, cromosoma):
-        penalizacion = 0
-        conflictos = []
-        
-        colisiones_aulas = {}
-        colisiones_docentes = {}
-        
-        for i_sec, gen in enumerate(cromosoma):
-            i_aula, i_horario = self.espacio_soluciones[gen]
-            aula = self.aulas[i_aula]
-            horario = self.horarios[i_horario]
-            seccion = self.secciones[i_sec]
-            
-            # 1. Colisión de Aula (Dura)
-            clave_aula = (i_aula, i_horario)
-            if clave_aula not in colisiones_aulas:
-                colisiones_aulas[clave_aula] = []
-            colisiones_aulas[clave_aula].append(i_sec)
-            
-            # 2. Colisión de Docente (Dura)
-            docente_id = seccion['docente_id']
-            clave_docente = (docente_id, i_horario)
-            if clave_docente not in colisiones_docentes:
-                colisiones_docentes[clave_docente] = []
-            colisiones_docentes[clave_docente].append(i_sec)
-            
-            # 3. Capacidad de Aula (Dura / Blanda)
-            factor_lab = 0.85 if seccion['laboratorio'] == 1 else 1.0
-            capacidad_efectiva = int(aula['capacidad_aula'] * factor_lab)
-            
-            if seccion['demanda'] > capacidad_efectiva:
-                sobrecupo = seccion['demanda'] - capacidad_efectiva
-                penalizacion += 500 + sobrecupo * 10
-                conflictos.append(f"Sección {seccion['seccion_id']} ({seccion['curso']}) excede cap. de {aula['aula_id']} ({seccion['demanda']}>{capacidad_efectiva})")
-            else:
-                desperdicio = capacidad_efectiva - seccion['demanda']
-                penalizacion += desperdicio * 1.5
-                
-            # 4. Compatibilidad de Laboratorios (Dura)
-            if seccion['laboratorio'] == 1 and aula['pabellon'] != 'C':
-                penalizacion += 400
-                conflictos.append(f"Sección {seccion['seccion_id']} ({seccion['curso']}) requiere Lab (Pabellón C), asignada en {aula['pabellon']}")
-                
-            # 5. Coincidencia de Turno (Blanda)
-            if horario['turno'].lower() != seccion['turno_preferido'].lower():
-                penalizacion += 100
-                
-        # Procesar colisiones
-        for clave, indices in colisiones_aulas.items():
-            if len(indices) > 1:
-                colisiones_en_aula = len(indices) - 1
-                penalizacion += colisiones_en_aula * 1000
-                aula_id = self.aulas[clave[0]]['aula_id']
-                horario_str = f"{self.horarios[clave[1]]['dia']} {self.horarios[clave[1]]['turno']}"
-                conflictos.append(f"Conflicto Aula: {len(indices)} secciones compitiendo por Aula {aula_id} en {horario_str}")
-                
-        for clave, indices in colisiones_docentes.items():
-            if len(indices) > 1:
-                colisiones_de_docente = len(indices) - 1
-                penalizacion += colisiones_de_docente * 1000
-                doc_id = clave[0]
-                horario_str = f"{self.horarios[clave[1]]['dia']} {self.horarios[clave[1]]['turno']}"
-                conflictos.append(f"Conflicto Docente: Docente ID {doc_id} asignado a {len(indices)} secciones en {horario_str}")
-                
-        fitness = 1.0 / (1.0 + penalizacion)
-        return fitness, conflictos
+def ga_seleccion_variables(df, pop_size=20, n_gen=30, mutation_rate=0.15):
+    """GA #1 — Selecciona el subconjunto de COLUMNAS_FEATURES_GA que minimiza MAE (Ridge, split 80/20)."""
+    candidatas = [c for c in COLUMNAS_FEATURES_GA if c in df.columns]
+    n = len(candidatas)
+    y = df["alumnos_matriculados"].values
+    X_all = df[candidatas].values
+    X_tr, X_te, y_tr, y_te = train_test_split(X_all, y, test_size=0.2, random_state=42)
 
-    def inicializar_poblacion(self):
-        poblacion = []
-        for _ in range(self.tam_poblacion):
-            individuo = [random.randint(0, self.tam_espacio - 1) for _ in range(self.num_genes)]
-            poblacion.append(individuo)
-        return poblacion
+    def fitness(ind):
+        idx = [i for i in range(n) if ind[i]]
+        if not idx:
+            return -1e9
+        pred = Ridge(alpha=1.0).fit(X_tr[:, idx], y_tr).predict(X_te[:, idx])
+        return -mean_absolute_error(y_te, pred)
 
-    def seleccion_torneo(self, poblacion, fitness_list, k=3):
-        seleccionados = []
-        for _ in range(len(poblacion)):
-            aspirantes = random.sample(list(zip(poblacion, fitness_list)), k)
-            ganador = max(aspirantes, key=lambda x: x[1])[0]
-            seleccionados.append(list(ganador))
-        return seleccionados
+    pop = [list(np.random.randint(0, 2, n)) for _ in range(pop_size)]
+    best_ind, best_score = pop[0][:], fitness(pop[0])
 
-    def cruzar(self, padre1, padre2):
-        if random.random() < self.tasa_cruce and self.num_genes > 1:
-            punto = random.randint(1, self.num_genes - 1)
-            hijo1 = padre1[:punto] + padre2[punto:]
-            hijo2 = padre2[:punto] + padre1[punto:]
-            return hijo1, hijo2
-        return list(padre1), list(padre2)
+    for _ in range(n_gen):
+        scores = [fitness(ind) for ind in pop]
+        gen_best = max(range(pop_size), key=lambda i: scores[i])
+        if scores[gen_best] > best_score:
+            best_score, best_ind = scores[gen_best], pop[gen_best][:]
+        sorted_p = sorted(range(pop_size), key=lambda i: scores[i], reverse=True)
+        new_pop = [pop[sorted_p[0]][:], pop[sorted_p[1]][:]]
+        while len(new_pop) < pop_size:
+            t1 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            t2 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            pt = random.randint(1, n - 1)
+            child = pop[t1][:pt] + pop[t2][pt:]
+            for i in range(n):
+                if random.random() < mutation_rate:
+                    child[i] = 1 - child[i]
+            if sum(child) == 0:
+                child[random.randint(0, n - 1)] = 1
+            new_pop.append(child)
+        pop = new_pop
 
-    def mutar(self, individuo):
-        for i in range(self.num_genes):
-            if random.random() < self.tasa_mutacion:
-                individuo[i] = random.randint(0, self.tam_espacio - 1)
-        return individuo
+    seleccionadas = [candidatas[i] for i in range(n) if best_ind[i]]
+    return seleccionadas, -best_score
 
-    def optimizar(self):
-        poblacion = self.inicializar_poblacion()
-        mejor_historico_fitness = -1.0
-        mejor_historico_cromosoma = None
-        mejor_historico_conflictos = []
-        
-        for gen_idx in range(self.generaciones):
-            fitness_conflictos = [self.calcular_fitness(ind) for ind in poblacion]
-            fitness_list = [fc[0] for fc in fitness_conflictos]
-            
-            mejor_idx = np.argmax(fitness_list)
-            mejor_fitness = fitness_list[mejor_idx]
-            mejor_cromosoma = poblacion[mejor_idx]
-            conflictos_mejor = fitness_conflictos[mejor_idx][1]
-            
-            if mejor_fitness > mejor_historico_fitness:
-                mejor_historico_fitness = mejor_fitness
-                mejor_historico_cromosoma = list(mejor_cromosoma)
-                mejor_historico_conflictos = conflictos_mejor
-                
-                self.mejor_cromosoma = mejor_historico_cromosoma
-                self.mejor_conflictos = mejor_historico_conflictos
-                
-            yield gen_idx, mejor_fitness, mejor_historico_fitness, mejor_historico_cromosoma, mejor_historico_conflictos
-            
-            padres = self.seleccion_torneo(poblacion, fitness_list)
-            
-            nueva_poblacion = []
-            # Elitismo: conservar los 2 mejores
-            indices_ordenados = np.argsort(fitness_list)[::-1]
-            nueva_poblacion.append(list(poblacion[indices_ordenados[0]]))
-            if len(poblacion) > 1:
-                nueva_poblacion.append(list(poblacion[indices_ordenados[1]]))
-                
-            while len(nueva_poblacion) < self.tam_poblacion:
-                p1 = random.choice(padres)
-                p2 = random.choice(padres)
-                h1, h2 = self.cruzar(p1, p2)
-                h1 = self.mutar(h1)
-                h2 = self.mutar(h2)
-                nueva_poblacion.append(h1)
-                if len(nueva_poblacion) < self.tam_poblacion:
-                    nueva_poblacion.append(h2)
-                    
-            poblacion = nueva_poblacion
 
-import random
+def ga_optimizar_secciones(demanda_plan, capacidad_efectiva, docentes_disponibles,
+                            pop_size=30, n_gen=50):
+    """GA #2 — Optimiza (n_secciones, factor_ocupacion) para distribución de aulas.
+    Cromosoma: [n_sec ∈ 1-10, factor*100 ∈ 60-100]. Penaliza déficit docente y hacinamiento."""
+    if demanda_plan <= 0 or capacidad_efectiva <= 0:
+        return {"n_secciones": 1, "factor_ocupacion": 0.90,
+                "cap_segura": capacidad_efectiva, "total_cupos": capacidad_efectiva,
+                "ocupacion": 0.0, "fitness": 0.0}
+
+    def decode(ind):
+        n_sec = max(1, min(10, ind[0]))
+        factor = max(0.60, min(1.00, ind[1] / 100.0))
+        cap_seg = max(1, int(np.floor(capacidad_efectiva * factor)))
+        total = n_sec * capacidad_efectiva
+        ocup = demanda_plan / total if total > 0 else 2.0
+        return n_sec, factor, cap_seg, total, ocup
+
+    def fitness(ind):
+        n_sec, _, _, _, ocup = decode(ind)
+        s = 200.0 if 0.65 <= ocup <= 0.90 else (80.0 if 0.50 <= ocup < 0.65 else 0.0)
+        s -= max(0.0, ocup - 1.0) * 1200
+        s -= max(0.0, ocup - 0.90) * 400
+        s -= max(0.0, 0.45 - ocup) * 500
+        if docentes_disponibles > 0:
+            s -= max(0, n_sec - docentes_disponibles) * 600
+        s -= abs(ocup - 0.75) * 80
+        return s
+
+    pop = [[random.randint(1, 8), random.randint(70, 100)] for _ in range(pop_size)]
+    best_ind, best_score = pop[0][:], fitness(pop[0])
+
+    for _ in range(n_gen):
+        scores = [fitness(ind) for ind in pop]
+        gen_best = max(range(pop_size), key=lambda i: scores[i])
+        if scores[gen_best] > best_score:
+            best_score, best_ind = scores[gen_best], pop[gen_best][:]
+        sorted_p = sorted(range(pop_size), key=lambda i: scores[i], reverse=True)
+        new_pop = [pop[sorted_p[0]][:], pop[sorted_p[1]][:]]
+        while len(new_pop) < pop_size:
+            t1 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            t2 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            child = [pop[t1][0] if random.random() < 0.5 else pop[t2][0],
+                     pop[t1][1] if random.random() < 0.5 else pop[t2][1]]
+            if random.random() < 0.25:
+                child[0] = max(1, min(10, child[0] + random.randint(-1, 1)))
+            if random.random() < 0.25:
+                child[1] = max(60, min(100, child[1] + random.randint(-5, 5)))
+            new_pop.append(child)
+        pop = new_pop
+
+    n_sec, factor, cap_seg, total, ocup = decode(best_ind)
+    return {"n_secciones": n_sec, "factor_ocupacion": factor,
+            "cap_segura": cap_seg, "total_cupos": total,
+            "ocupacion": ocup, "fitness": best_score}
+
+
+def ga_horarios(df, pop_size=40, n_gen=60, mutation_rate=0.05):
+    """GA #3 — Timetabling: asigna top-30 cursos a (aula, turno) minimizando conflictos y hacinamiento.
+    Cromosoma: [aula_idx * n_cursos, turno_idx * n_cursos]. Devuelve (resumen, aulas, turnos, asignaciones, score)."""
+    resumen = (
+        df.groupby("nombre_curso", as_index=False)
+        .agg(demanda=("alumnos_matriculados", "mean"),
+             laboratorio=("laboratorio", "max"),
+             docente_id=("docente_id", "first"))
+        .sort_values("demanda", ascending=False)
+        .head(30)
+        .reset_index(drop=True)
+    )
+    resumen["demanda"] = resumen["demanda"].round().astype(int)
+
+    aulas = (
+        df[["aula_id", "capacidad_aula", "pabellon"]]
+        .drop_duplicates("aula_id")
+        .reset_index(drop=True)
+    )
+    turnos = sorted(df["horario_seccion"].dropna().unique().tolist())
+
+    n_c, n_a, n_t = len(resumen), len(aulas), len(turnos)
+    if n_a == 0 or n_t == 0 or n_c == 0:
+        return resumen, aulas, turnos, [], 0.0
+
+    caps = aulas["capacidad_aula"].values
+    docs = resumen["docente_id"].values
+    dems = resumen["demanda"].values
+
+    def fitness(ind):
+        a_idx, t_idx = ind[:n_c], ind[n_c:]
+        s = 0.0
+        for i in range(n_c):
+            for j in range(i + 1, n_c):
+                if a_idx[i] == a_idx[j] and t_idx[i] == t_idx[j]:
+                    s -= 800
+                if docs[i] == docs[j] and t_idx[i] == t_idx[j]:
+                    s -= 500
+        for i in range(n_c):
+            ocup = dems[i] / caps[a_idx[i]] if caps[a_idx[i]] > 0 else 2.0
+            if ocup > 1.0:
+                s -= (ocup - 1.0) * 600
+            elif 0.65 <= ocup <= 0.90:
+                s += 100
+            elif ocup < 0.40:
+                s -= (0.40 - ocup) * 150
+        return s
+
+    gene_len = 2 * n_c
+    pop = [list(np.random.randint(0, n_a, n_c)) + list(np.random.randint(0, n_t, n_c))
+           for _ in range(pop_size)]
+    best_ind, best_score = pop[0][:], fitness(pop[0])
+
+    for _ in range(n_gen):
+        scores = [fitness(ind) for ind in pop]
+        gen_best = max(range(pop_size), key=lambda i: scores[i])
+        if scores[gen_best] > best_score:
+            best_score, best_ind = scores[gen_best], pop[gen_best][:]
+        sorted_p = sorted(range(pop_size), key=lambda i: scores[i], reverse=True)
+        new_pop = [pop[sorted_p[0]][:], pop[sorted_p[1]][:]]
+        while len(new_pop) < pop_size:
+            t1 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            t2 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            pt = random.randint(1, gene_len - 1)
+            child = pop[t1][:pt] + pop[t2][pt:]
+            for k in range(gene_len):
+                if random.random() < mutation_rate:
+                    child[k] = (random.randint(0, n_a - 1) if k < n_c
+                                else random.randint(0, n_t - 1))
+            new_pop.append(child)
+        pop = new_pop
+
+    a_asig, t_asig = best_ind[:n_c], best_ind[n_c:]
+    return resumen, aulas, turnos, list(zip(a_asig, t_asig)), best_score
+
 
 # ==============================
 # APLICACIÓN PRINCIPAL
@@ -362,6 +378,8 @@ class AppDemandaAulas:
         self.X, self.y = preparar_datos(self.df)
         self.modelos = entrenar_modelos(self.X, self.y)
         self.modelo_activo = self.modelos["Regresión Lineal Múltiple"]["modelo"]
+        self.ga_features_resultado = None
+        self.ga_mae_resultado = None
 
         self.crear_menu_lateral()
         self.contenedor_principal = tk.Frame(self.root, bg=GRIS_FONDO)
@@ -384,7 +402,9 @@ class AppDemandaAulas:
             ("📊 Dashboard Resumen", self.vista_dashboard),
             ("📈 Análisis de Aforos", self.vista_analisis),
             ("🤖 Simulación IA", self.vista_simulacion),
-            ("🗓 Horarios Distribuidos", self.vista_horarios_distribuidos)
+            ("🧬 AG-1 Variables", self.vista_ga1_variables),
+            ("🧬 AG-2 Secciones", self.vista_ga2_secciones),
+            ("🧬 AG-3 Horarios", self.vista_optimizador_horarios),
         ]
 
         for texto, comando in botones:
@@ -1632,14 +1652,6 @@ class AppDemandaAulas:
 
             aulas_minimas = max(1, int(np.ceil(demanda_plan / capacidad_efectiva)))
             aulas_recomendadas = max(1, int(np.ceil(demanda_plan / capacidad_segura)))
-            
-            # Guardar variables de simulación para el algoritmo genético
-            self.sim_demanda_plan = demanda_plan
-            self.sim_aulas_recomendadas = aulas_recomendadas
-            self.sim_capacidad_efectiva = capacidad_efectiva
-            self.sim_laboratorio = laboratorio
-            self.sim_turno = turno
-            self.sim_pabellon = pabellon
             capacidad_total = aulas_recomendadas * capacidad_efectiva
             ocupacion_promedio = demanda_plan / capacidad_total
             cupos_libres = capacidad_total - demanda_plan
@@ -1838,573 +1850,405 @@ Recomendación:
         except Exception as e:
             messagebox.showerror("Error", f"Datos inválidos o incompletos.\n\nDetalle técnico: {e}")
 
+
     # ==============================
-    # 4. VISTA: HORARIOS DISTRIBUIDOS (Algoritmo Genético)
+    # GA #1 — VISTA DEDICADA
     # ==============================
-
-    # --- Clase interna: Motor del Algoritmo Genético ---
-    class _OptimizadorGenetico:
-        """Algoritmo Genético para optimizar la asignación de secciones a
-        combinaciones (aula, horario), minimizando colisiones y desperdicio
-        de aforo. Usa los resultados de Regresión Lineal (predicción de
-        demanda) y K-Means Clustering (clasificación de estado del aula)
-        como insumos para la función de aptitud (fitness).
-
-        Componentes obligatorios de la metaheurística:
-        • Población   – conjunto de cromosomas (soluciones candidatas)
-        • Fitness     – función de aptitud con penalizaciones duras y blandas
-        • Selección   – torneo de tamaño k=3
-        • Cruce       – single-point crossover con tasa configurable
-        • Mutación    – mutación uniforme por gen con tasa configurable
-        • Elitismo    – los 2 mejores pasan intactos a la siguiente generación
-        """
-
-        def __init__(self, aulas, horarios, secciones,
-                     tam_poblacion=80, generaciones=100,
-                     tasa_cruce=0.8, tasa_mutacion=0.10):
-            self.aulas = aulas
-            self.horarios = horarios
-            self.secciones = secciones
-            self.tam_poblacion = tam_poblacion
-            self.generaciones = generaciones
-            self.tasa_cruce = tasa_cruce
-            self.tasa_mutacion = tasa_mutacion
-
-            self.num_aulas = len(aulas)
-            self.num_horarios = len(horarios)
-            self.num_genes = len(secciones)
-
-            # Espacio de búsqueda: cada gen codifica un par (aula, horario)
-            self.espacio = []
-            for ia in range(self.num_aulas):
-                for ih in range(self.num_horarios):
-                    self.espacio.append((ia, ih))
-            self.tam_espacio = len(self.espacio)
-
-            self.mejor_cromosoma = None
-            self.mejor_conflictos = []
-
-        # --- Función de Aptitud (Fitness) ---------------------------------
-        def calcular_fitness(self, cromosoma):
-            """Evalúa un cromosoma. Retorna (fitness, lista_conflictos).
-            fitness = 1 / (1 + penalización_total)
-            """
-            pen = 0
-            conflictos = []
-            uso_aula = {}     # (i_aula, i_horario) -> [indices de sección]
-            uso_docente = {}  # (docente_id, i_horario) -> [indices de sección]
-
-            for i_sec, gen in enumerate(cromosoma):
-                ia, ih = self.espacio[gen]
-                aula = self.aulas[ia]
-                horario = self.horarios[ih]
-                sec = self.secciones[i_sec]
-
-                # Colisión de aula
-                clave_a = (ia, ih)
-                uso_aula.setdefault(clave_a, []).append(i_sec)
-
-                # Colisión de docente
-                clave_d = (sec['docente_id'], ih)
-                uso_docente.setdefault(clave_d, []).append(i_sec)
-
-                # Capacidad efectiva (laboratorio reduce 15%)
-                factor = 0.85 if sec['laboratorio'] == 1 else 1.0
-                cap_ef = int(aula['capacidad_aula'] * factor)
-
-                if sec['demanda'] > cap_ef:
-                    exceso = sec['demanda'] - cap_ef
-                    pen += 500 + exceso * 10
-                    conflictos.append(
-                        f"Secc {sec['sid']} ({sec['curso']}): "
-                        f"demanda {sec['demanda']} > cap {cap_ef} en Aula {aula['aula_id']}")
-                else:
-                    pen += (cap_ef - sec['demanda']) * 1.5  # desperdicio
-
-                # Laboratorio incompatible
-                if sec['laboratorio'] == 1 and aula.get('pabellon', '') != 'C':
-                    pen += 400
-                    conflictos.append(
-                        f"Secc {sec['sid']} ({sec['curso']}): requiere Lab (Pab C), "
-                        f"asignada en Pab {aula.get('pabellon', '?')}")
-
-                # Turno no preferido
-                if horario['turno'].lower() != sec.get('turno_pref', '').lower():
-                    pen += 100
-
-            # Penalizar colisiones
-            for clave, ids in uso_aula.items():
-                if len(ids) > 1:
-                    pen += (len(ids) - 1) * 1000
-                    a_id = self.aulas[clave[0]]['aula_id']
-                    h_str = f"{self.horarios[clave[1]]['dia']} {self.horarios[clave[1]]['turno']}"
-                    conflictos.append(
-                        f"Colisión aula: {len(ids)} secciones en Aula {a_id}, {h_str}")
-
-            for clave, ids in uso_docente.items():
-                if len(ids) > 1:
-                    pen += (len(ids) - 1) * 1000
-                    h_str = f"{self.horarios[clave[1]]['dia']} {self.horarios[clave[1]]['turno']}"
-                    conflictos.append(
-                        f"Colisión docente ID {clave[0]}: {len(ids)} secciones en {h_str}")
-
-            return 1.0 / (1.0 + pen), conflictos
-
-        # --- Inicialización de la Población -------------------------------
-        def inicializar_poblacion(self):
-            """Genera la población inicial de cromosomas aleatorios."""
-            return [[random.randint(0, self.tam_espacio - 1)
-                     for _ in range(self.num_genes)]
-                    for _ in range(self.tam_poblacion)]
-
-        # --- Selección por Torneo -----------------------------------------
-        def seleccion_torneo(self, poblacion, fitness_list, k=3):
-            """Selecciona individuos por torneo de tamaño k."""
-            sel = []
-            pool = list(zip(poblacion, fitness_list))
-            for _ in range(len(poblacion)):
-                aspirantes = random.sample(pool, min(k, len(pool)))
-                ganador = max(aspirantes, key=lambda x: x[1])[0]
-                sel.append(list(ganador))
-            return sel
-
-        # --- Cruce en un Punto (Single-Point Crossover) -------------------
-        def cruzar(self, p1, p2):
-            """Cruza dos padres. Retorna dos hijos."""
-            if random.random() < self.tasa_cruce and self.num_genes > 1:
-                pt = random.randint(1, self.num_genes - 1)
-                return p1[:pt] + p2[pt:], p2[:pt] + p1[pt:]
-            return list(p1), list(p2)
-
-        # --- Mutación Uniforme --------------------------------------------
-        def mutar(self, ind):
-            """Muta cada gen con probabilidad tasa_mutacion."""
-            for i in range(self.num_genes):
-                if random.random() < self.tasa_mutacion:
-                    ind[i] = random.randint(0, self.tam_espacio - 1)
-            return ind
-
-        # --- Bucle Evolutivo (generador) ----------------------------------
-        def optimizar(self):
-            """Generador que ejecuta el ciclo evolutivo completo.
-            Produce (gen, fitness_actual, mejor_fitness, mejor_cromosoma, conflictos)
-            en cada generación para actualizar la GUI sin bloquearla."""
-            pob = self.inicializar_poblacion()
-            mejor_f = -1.0
-            mejor_c = None
-            mejor_conf = []
-
-            for gen in range(self.generaciones):
-                evals = [self.calcular_fitness(ind) for ind in pob]
-                fits = [e[0] for e in evals]
-
-                idx_best = int(np.argmax(fits))
-                f_gen = fits[idx_best]
-
-                if f_gen > mejor_f:
-                    mejor_f = f_gen
-                    mejor_c = list(pob[idx_best])
-                    mejor_conf = evals[idx_best][1]
-                    self.mejor_cromosoma = mejor_c
-                    self.mejor_conflictos = mejor_conf
-
-                yield gen, f_gen, mejor_f, mejor_c, mejor_conf
-
-                # Siguiente generación
-                padres = self.seleccion_torneo(pob, fits)
-                nueva = []
-                orden = np.argsort(fits)[::-1]
-                nueva.append(list(pob[orden[0]]))  # elitismo 1
-                if len(pob) > 1:
-                    nueva.append(list(pob[orden[1]]))  # elitismo 2
-
-                while len(nueva) < self.tam_poblacion:
-                    pa = random.choice(padres)
-                    pb = random.choice(padres)
-                    h1, h2 = self.cruzar(pa, pb)
-                    nueva.append(self.mutar(h1))
-                    if len(nueva) < self.tam_poblacion:
-                        nueva.append(self.mutar(h2))
-                pob = nueva
-
-    # --- Vista del Dashboard: Horarios Distribuidos -----------------------
-    def vista_horarios_distribuidos(self):
-        """Construye la interfaz de la vista 'Horarios Distribuidos'.
-        Permite configurar hiperparámetros del AG, ejecutar la optimización
-        y visualizar la convergencia y la tabla de asignación resultante."""
+    def vista_ga1_variables(self):
         self.limpiar_contenedor()
 
-        tk.Label(self.contenedor_principal,
-                 text="Horarios Distribuidos — Algoritmo Genético",
-                 font=FUENTE_TITULO, bg=GRIS_FONDO, fg=NEGRO
-                 ).pack(pady=15, anchor="w", padx=30)
+        header = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        header.pack(fill="x", pady=(18, 5), padx=28)
 
-        tk.Label(self.contenedor_principal,
-                 text=("Optimización metaheurística que combina la predicción de "
-                       "demanda (Regresión Lineal) y la clasificación de eficiencia "
-                       "(K-Means Clustering) para distribuir secciones en aulas y horarios."),
-                 font=("Segoe UI", 10), bg=GRIS_FONDO, fg=GRIS_TEXTO,
-                 wraplength=900, justify="left"
-                 ).pack(anchor="w", padx=30, pady=(0, 10))
+        tk.Label(header, text="AG #1 — Selección Óptima de Variables Predictoras",
+                 font=("Segoe UI", 22, "bold"), bg=GRIS_FONDO, fg=NEGRO).pack(side="left")
 
+        self.btn_ga1 = tk.Button(
+            header, text="Ejecutar AG #1 🧬",
+            font=FUENTE_NORMAL, bg=ROJO_UTP, fg=BLANCO,
+            activebackground=ROJO_CLARO, activeforeground=BLANCO,
+            bd=0, padx=14, pady=8, cursor="hand2",
+            command=self._ejecutar_ga1
+        )
+        self.btn_ga1.pack(side="right")
+
+        mae_base = self.modelos["Regresión Lineal Múltiple"]["MAE"]
+        n_cand = len([c for c in COLUMNAS_FEATURES_GA if c in self.df.columns])
+
+        tk.Label(
+            self.contenedor_principal,
+            text=(f"Busca el subconjunto óptimo de {n_cand} variables candidatas que minimiza el MAE "
+                  f"del modelo Ridge (split 80/20). MAE base del modelo actual: ±{mae_base:.2f} alumnos."),
+            font=("Segoe UI", 10), bg=GRIS_FONDO, fg=GRIS_TEXTO, wraplength=1200, justify="left"
+        ).pack(anchor="w", padx=30, pady=(0, 4))
+
+        self.lbl_ga1_estado = tk.Label(
+            self.contenedor_principal,
+            text="Estado: No ejecutado — presiona 'Ejecutar AG #1 🧬' para iniciar.",
+            font=("Segoe UI", 10, "italic"), bg=GRIS_FONDO, fg=GRIS_TEXTO
+        )
+        self.lbl_ga1_estado.pack(anchor="w", padx=30, pady=(0, 12))
+
+        # Panel de candidatas y resultado
         cuerpo = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
-        cuerpo.pack(fill="both", expand=True, padx=30, pady=5)
-        cuerpo.columnconfigure(0, weight=0, minsize=370)
+        cuerpo.pack(fill="both", expand=True, padx=28, pady=(0, 18))
+        cuerpo.columnconfigure(0, weight=1)
         cuerpo.columnconfigure(1, weight=1)
         cuerpo.rowconfigure(0, weight=1)
 
-        # === PANEL IZQUIERDO: CONFIGURACIÓN ===
-        f_cfg = tk.LabelFrame(cuerpo, text="Configuración del AG",
-                              font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO,
-                              padx=15, pady=15)
-        f_cfg.grid(row=0, column=0, sticky="ns", padx=(0, 15))
-        f_cfg.columnconfigure(0, weight=1)
-        f_cfg.columnconfigure(1, weight=0)
+        # Izquierda: variables candidatas
+        f_cand = tk.LabelFrame(cuerpo, text="Variables Candidatas (cromosoma)",
+                               font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO, padx=10, pady=10)
+        f_cand.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
 
-        row = 0
-        # Periodo
-        tk.Label(f_cfg, text="Periodo académico:", font=FUENTE_NORMAL,
-                 bg=BLANCO).grid(row=row, column=0, sticky="w", pady=4)
-        periodos = sorted(list(self.df["periodo"].dropna().unique()))
-        self._hd_periodo = ttk.Combobox(f_cfg, values=periodos,
-                                        state="readonly", width=14)
-        self._hd_periodo.set(periodos[-1] if periodos else "")
-        self._hd_periodo.grid(row=row, column=1, sticky="e", pady=4)
-        row += 1
+        for col in COLUMNAS_FEATURES_GA:
+            presente = col in self.df.columns
+            color = NEGRO if presente else "#BDBDBD"
+            tk.Label(f_cand, text=f"{'●' if presente else '○'}  {col}",
+                     font=("Segoe UI", 10), bg=BLANCO, fg=color,
+                     anchor="w").pack(fill="x", pady=1)
 
-        # Pabellón
-        tk.Label(f_cfg, text="Pabellón:", font=FUENTE_NORMAL,
-                 bg=BLANCO).grid(row=row, column=0, sticky="w", pady=4)
-        pabs = sorted(list(self.df["pabellon"].dropna().unique()))
-        self._hd_pabellon = ttk.Combobox(f_cfg, values=pabs,
-                                         state="readonly", width=14)
-        self._hd_pabellon.set(pabs[0] if pabs else "A")
-        self._hd_pabellon.grid(row=row, column=1, sticky="e", pady=4)
-        row += 1
+        # Derecha: resultado
+        f_res = tk.LabelFrame(cuerpo, text="Resultado del AG",
+                              font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO, padx=10, pady=10)
+        f_res.grid(row=0, column=1, sticky="nsew")
 
-        # Turno
-        tk.Label(f_cfg, text="Turno de referencia:", font=FUENTE_NORMAL,
-                 bg=BLANCO).grid(row=row, column=0, sticky="w", pady=4)
-        turnos_uniq = sorted([str(x) for x in self.df["horario_seccion"].dropna().unique()])
-        self._hd_turno = ttk.Combobox(f_cfg, values=turnos_uniq,
-                                      state="readonly", width=14)
-        self._hd_turno.set(turnos_uniq[0] if turnos_uniq else "Mañana")
-        self._hd_turno.grid(row=row, column=1, sticky="e", pady=4)
-        row += 1
+        if self.ga_features_resultado:
+            mejora = mae_base - self.ga_mae_resultado
+            signo = "↓" if mejora >= 0 else "↑"
+            color_r = COLOR_OPTIMO if mejora >= 0 else COLOR_SOBREPOBLADO
+            tk.Label(f_res, text="Variables seleccionadas por el AG:",
+                     font=("Segoe UI", 11, "bold"), bg=BLANCO, fg=NEGRO).pack(anchor="w", pady=(0, 4))
+            for feat in self.ga_features_resultado:
+                tk.Label(f_res, text=f"  ✔  {feat}",
+                         font=("Segoe UI", 10), bg=BLANCO, fg=COLOR_OPTIMO).pack(anchor="w")
+            tk.Label(f_res,
+                     text=f"\nMAE AG: ±{self.ga_mae_resultado:.2f}  vs  MAE base: ±{mae_base:.2f}",
+                     font=("Segoe UI", 12, "bold"), bg=BLANCO, fg=color_r).pack(anchor="w", pady=(10, 2))
+            tk.Label(f_res,
+                     text=f"Cambio: {signo}{abs(mejora):.2f} alumnos",
+                     font=("Segoe UI", 11), bg=BLANCO, fg=color_r).pack(anchor="w")
+        else:
+            tk.Label(f_res,
+                     text="Ejecuta el AG para ver qué variables\nselecciona el algoritmo genético.",
+                     font=("Segoe UI", 11, "italic"), bg=BLANCO, fg=GRIS_TEXTO,
+                     justify="left").pack(anchor="w", pady=20)
 
-        # Población
-        tk.Label(f_cfg, text="Tamaño de población:", font=FUENTE_NORMAL,
-                 bg=BLANCO).grid(row=row, column=0, sticky="w", pady=4)
-        self._hd_pop = tk.IntVar(value=80)
-        tk.Spinbox(f_cfg, from_=20, to=300, textvariable=self._hd_pop,
-                   width=12, justify="center").grid(row=row, column=1,
-                                                    sticky="e", pady=4)
-        row += 1
-
-        # Generaciones
-        tk.Label(f_cfg, text="Generaciones:", font=FUENTE_NORMAL,
-                 bg=BLANCO).grid(row=row, column=0, sticky="w", pady=4)
-        self._hd_gen = tk.IntVar(value=100)
-        tk.Spinbox(f_cfg, from_=10, to=500, textvariable=self._hd_gen,
-                   width=12, justify="center").grid(row=row, column=1,
-                                                    sticky="e", pady=4)
-        row += 1
-
-        # Prob. mutación
-        tk.Label(f_cfg, text="Prob. de mutación:", font=FUENTE_NORMAL,
-                 bg=BLANCO).grid(row=row, column=0, sticky="w", pady=4)
-        self._hd_mut = tk.DoubleVar(value=0.10)
-        tk.Spinbox(f_cfg, from_=0.01, to=0.50, increment=0.01,
-                   textvariable=self._hd_mut, width=12,
-                   justify="center").grid(row=row, column=1,
-                                          sticky="e", pady=4)
-        row += 1
-
-        # Botón ejecutar
-        tk.Button(f_cfg, text="EJECUTAR OPTIMIZACIÓN",
-                  font=FUENTE_SUBTITULO, bg=ROJO_UTP, fg=BLANCO,
-                  activebackground=ROJO_CLARO, activeforeground=BLANCO,
-                  bd=0, pady=10, cursor="hand2",
-                  command=self._ejecutar_horarios_ag
-                  ).grid(row=row, column=0, columnspan=2,
-                         sticky="we", pady=(18, 10))
-        row += 1
-
-        # Panel de estadísticas
-        f_stats = tk.LabelFrame(f_cfg, text="Resultados del Proceso",
-                                font=("Segoe UI", 10, "bold"),
-                                bg=BLANCO, fg=NEGRO, padx=10, pady=10)
-        f_stats.grid(row=row, column=0, columnspan=2, sticky="we", pady=8)
-
-        self._hd_lbl_fit = tk.Label(f_stats, text="Mejor Fitness: ---",
-                                    font=FUENTE_NORMAL, bg=BLANCO, fg=GRIS_TEXTO)
-        self._hd_lbl_fit.pack(anchor="w")
-        self._hd_lbl_conf = tk.Label(f_stats, text="Conflictos: ---",
-                                     font=FUENTE_NORMAL, bg=BLANCO, fg=GRIS_TEXTO)
-        self._hd_lbl_conf.pack(anchor="w")
-        self._hd_lbl_time = tk.Label(f_stats, text="Tiempo: ---",
-                                     font=FUENTE_NORMAL, bg=BLANCO, fg=GRIS_TEXTO)
-        self._hd_lbl_time.pack(anchor="w")
-
-        # === PANEL DERECHO: GRÁFICO + TABLA ===
-        f_der = tk.Frame(cuerpo, bg=GRIS_FONDO)
-        f_der.grid(row=0, column=1, sticky="nsew")
-        f_der.rowconfigure(0, weight=1)
-        f_der.rowconfigure(1, weight=1)
-        f_der.columnconfigure(0, weight=1)
-
-        # Gráfico de convergencia
-        self._hd_panel_graf = tk.Frame(f_der, bg=BLANCO, bd=1, relief="solid")
-        self._hd_panel_graf.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
-
-        # Tabla de asignación
-        self._hd_panel_tabla = tk.Frame(f_der, bg=BLANCO, bd=1, relief="solid")
-        self._hd_panel_tabla.grid(row=1, column=0, sticky="nsew")
-
-        tk.Label(self._hd_panel_tabla,
-                 text="Distribución Óptima de Horarios y Aulas",
-                 font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO
-                 ).pack(anchor="w", padx=15, pady=(10, 5))
-
-        cols = ("seccion", "curso", "docente", "aula",
-                "capacidad", "horario", "ocupacion", "estado")
-        self._hd_tree = ttk.Treeview(self._hd_panel_tabla,
-                                     columns=cols, show="headings", height=9)
-        headers = {"seccion": "Sección", "curso": "Curso",
-                   "docente": "Docente", "aula": "Aula",
-                   "capacidad": "Capacidad", "horario": "Día / Turno",
-                   "ocupacion": "Ocupación", "estado": "Estado"}
-        for c in cols:
-            self._hd_tree.heading(c, text=headers[c])
-            self._hd_tree.column(c, anchor="center", stretch=True)
-
-        sb = ttk.Scrollbar(self._hd_panel_tabla, orient="vertical",
-                           command=self._hd_tree.yview)
-        self._hd_tree.configure(yscrollcommand=sb.set)
-        self._hd_tree.pack(side="left", fill="both", expand=True,
-                           padx=(15, 0), pady=(5, 10))
-        sb.pack(side="right", fill="y", padx=(0, 15), pady=(5, 10))
-
-        self._hd_fig = None
-        self._hd_render_vacio()
-
-    # --- Gráfico vacío inicial ---
-    def _hd_render_vacio(self):
-        for w in self._hd_panel_graf.winfo_children():
-            w.destroy()
-        if self._hd_fig is not None:
-            plt.close(self._hd_fig)
-
-        self._hd_fig, ax = plt.subplots(figsize=(8, 2.6))
-        self._hd_fig.patch.set_facecolor(BLANCO)
-        ax.set_facecolor("#F9F9F9")
-        ax.set_title("Convergencia del Algoritmo Genético", fontsize=12)
-        ax.set_xlabel("Generación", fontsize=10)
-        ax.set_ylabel("Fitness (Aptitud)", fontsize=10)
-        ax.grid(True, linestyle="--", alpha=0.5)
-        plt.tight_layout()
-        canvas = FigureCanvasTkAgg(self._hd_fig, master=self._hd_panel_graf)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
-
-    # --- Preparar secciones usando Regresión + Clustering -----------------
-    def _hd_preparar_secciones(self, periodo, pabellon, turno):
-        """Genera la lista de secciones para el AG combinando:
-        1) Predicción de demanda por Regresión Lineal (modelo entrenado)
-        2) Clasificación de eficiencia por K-Means (cluster del análisis)
-        """
-        # Filtrar datos históricos
-        mask = (self.df["periodo"] == periodo) & (self.df["pabellon"] == pabellon)
-        df_filt = self.df[mask].copy()
-
-        # Si no hay datos para este filtro, usar cualquier periodo disponible
-        if df_filt.empty:
-            df_filt = self.df[self.df["pabellon"] == pabellon].copy()
-        if df_filt.empty:
-            df_filt = self.df.copy()
-
-        df_filt = df_filt.head(15)  # Limitar para rendimiento
-
-        secciones = []
-        modelo_reg = self.modelos["Regresión Lineal Múltiple"]["modelo"]
-
-        for idx, row in df_filt.iterrows():
-            # --- Regresión: predecir demanda ---
-            X_pred = pd.DataFrame([{
-                "alumnos_nuevos": int(row["alumnos_nuevos"]),
-                "alumnos_prerrequisito": int(row["alumnos_prerrequisito"]),
-                "alumnos_repitentes": int(row["alumnos_repitentes"]),
-                "docente_disponible": int(row["docente_disponible"]),
-                "capacidad_aula": int(row["capacidad_aula"]),
-                "duracion_semanas": int(row["duracion_semanas"]),
-                "laboratorio": int(row["laboratorio"])
-            }])
-            demanda_pred = max(1, int(round(float(modelo_reg.predict(X_pred)[0]))))
-
-            # --- Clustering: clasificar estado de eficiencia ---
-            X_cluster = np.array([[demanda_pred, int(row["capacidad_aula"])]])
-            km_temp = KMeans(n_clusters=3, n_init=10, random_state=42)
-            # Entrenar con los datos globales para tener centroides coherentes
-            datos_globales = self.df[["alumnos_matriculados", "capacidad_aula"]].values
-            km_temp.fit(datos_globales)
-            cluster_id = int(km_temp.predict(X_cluster)[0])
-
-            # Mapear cluster a etiqueta
-            centroides = km_temp.cluster_centers_
-            ratios = [c[0] / c[1] if c[1] > 0 else 0 for c in centroides]
-            orden = sorted(range(3), key=lambda i: ratios[i])
-            roles = {orden[0]: "Sub", orden[1]: "Óptimo", orden[2]: "Sobre"}
-            etiqueta_cluster = roles.get(cluster_id, "Óptimo")
-
-            secciones.append({
-                "sid": f"S-{row['id_curso']}-{idx}",
-                "curso": row["nombre_curso"],
-                "docente_id": int(row["docente_id"]),
-                "demanda": demanda_pred,
-                "laboratorio": int(row["laboratorio"]),
-                "turno_pref": turno,
-                "cluster": etiqueta_cluster
-            })
-
-        return secciones
-
-    # --- Ejecutar el Algoritmo Genético -----------------------------------
-    def _ejecutar_horarios_ag(self):
-        periodo = self._hd_periodo.get()
-        pabellon = self._hd_pabellon.get()
-        turno = self._hd_turno.get()
-
-        # Aulas disponibles
-        aulas_df = (self.df[self.df["pabellon"] == pabellon]
-                    [["aula_id", "capacidad_aula", "pabellon"]]
-                    .drop_duplicates())
-        aulas = aulas_df.to_dict('records')
-        if not aulas:
-            aulas = [{"aula_id": 100 + i, "capacidad_aula": 40,
-                      "pabellon": pabellon} for i in range(8)]
-
-        # Horarios (15 slots: L-V × 3 turnos)
-        dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
-        turnos_dia = ["Mañana", "Tarde", "Noche"]
-        horarios = [{"dia": d, "turno": t} for d in dias for t in turnos_dia]
-
-        # Secciones (con predicción IA + clustering)
-        secciones = self._hd_preparar_secciones(periodo, pabellon, turno)
-        if not secciones:
-            messagebox.showwarning("Sin datos",
-                                   "No se encontraron secciones para el filtro seleccionado.")
+    # ==============================
+    # GA #1 — LÓGICA DE UI
+    # ==============================
+    def _ejecutar_ga1(self):
+        try:
+            self.btn_ga1.config(state="disabled")
+            self.lbl_ga1_estado.config(
+                text="⚙️ Ejecutando AG... buscando subconjunto óptimo de variables.",
+                fg="#B8860B"
+            )
+            self.root.update_idletasks()
+        except tk.TclError:
             return
 
-        # Instanciar AG
-        ag = self._OptimizadorGenetico(
-            aulas=aulas,
-            horarios=horarios,
-            secciones=secciones,
-            tam_poblacion=self._hd_pop.get(),
-            generaciones=self._hd_gen.get(),
-            tasa_mutacion=self._hd_mut.get()
+        def _run():
+            features, mae = ga_seleccion_variables(self.df)
+            mae_base = self.modelos["Regresión Lineal Múltiple"]["MAE"]
+            self.ga_features_resultado = features
+            self.ga_mae_resultado = mae
+            self.root.after(0, lambda: self._actualizar_ga1_ui(features, mae, mae_base))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _actualizar_ga1_ui(self, features, mae_ga, mae_base):
+        try:
+            self.btn_ga1.config(state="normal")
+            mejora = mae_base - mae_ga
+            signo = "↓" if mejora >= 0 else "↑"
+            color = COLOR_OPTIMO if mejora >= 0 else "#B8860B"
+            self.lbl_ga1_estado.config(
+                text=(f"✔ Completado — {len(features)} variables seleccionadas | "
+                      f"MAE AG: ±{mae_ga:.2f}  vs  MAE base: ±{mae_base:.2f}  →  "
+                      f"Cambio: {signo}{abs(mejora):.2f} alumnos"),
+                fg=color
+            )
+            # Refresca el panel de resultados recargando la vista
+            self.vista_ga1_variables()
+        except tk.TclError:
+            pass
+
+    # ==============================
+    # GA #2 — VISTA DEDICADA
+    # ==============================
+    def vista_ga2_secciones(self):
+        self.limpiar_contenedor()
+
+        header = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        header.pack(fill="x", pady=(18, 5), padx=28)
+
+        tk.Label(header, text="AG #2 — Optimización de Distribución de Secciones",
+                 font=("Segoe UI", 22, "bold"), bg=GRIS_FONDO, fg=NEGRO).pack(side="left")
+
+        self.btn_ga2 = tk.Button(
+            header, text="Ejecutar AG #2 🧬",
+            font=FUENTE_NORMAL, bg=ROJO_UTP, fg=BLANCO,
+            activebackground=ROJO_CLARO, activeforeground=BLANCO,
+            bd=0, padx=14, pady=8, cursor="hand2",
+            command=self._ejecutar_ga2
         )
+        self.btn_ga2.pack(side="right")
 
-        gen_x, fit_y, best_y = [], [], []
-        t0 = time.time()
-        generador = ag.optimizar()
-        n_gen = self._hd_gen.get()
+        tk.Label(
+            self.contenedor_principal,
+            text="Optimiza el número de secciones y el factor de ocupación para minimizar hacinamiento y subutilización.",
+            font=("Segoe UI", 10), bg=GRIS_FONDO, fg=GRIS_TEXTO
+        ).pack(anchor="w", padx=30, pady=(0, 10))
 
-        def paso():
-            try:
-                g, f_act, f_best, _, confs = next(generador)
-                gen_x.append(g)
-                fit_y.append(f_act)
-                best_y.append(f_best)
+        cuerpo = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        cuerpo.pack(fill="both", expand=True, padx=28, pady=(0, 18))
+        cuerpo.columnconfigure(0, weight=0, minsize=380)
+        cuerpo.columnconfigure(1, weight=1)
+        cuerpo.rowconfigure(0, weight=1)
 
-                self._hd_lbl_fit.config(
-                    text=f"Mejor Fitness: {f_best:.6f}  (Gen {g + 1})",
-                    fg=COLOR_OPTIMO if f_best > 0.002 else ROJO_UTP)
-                self._hd_lbl_conf.config(
-                    text=f"Conflictos: {len(confs)}",
-                    fg=ROJO_UTP if confs else COLOR_OPTIMO)
-                self._hd_lbl_time.config(
-                    text=f"Tiempo: {time.time() - t0:.2f} s")
+        # Izquierda: formulario de parámetros
+        f_form = tk.LabelFrame(cuerpo, text="Parámetros de entrada",
+                               font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO, padx=14, pady=14)
+        f_form.grid(row=0, column=0, sticky="ns", padx=(0, 16))
 
-                if g % 5 == 0 or g == n_gen - 1:
-                    self._hd_render_curva(gen_x, fit_y, best_y)
+        cap_base = int(round(float(self.df["capacidad_aula"].median()))) if "capacidad_aula" in self.df.columns else 40
+        self.ga2_vars = {
+            "demanda":    tk.IntVar(value=60),
+            "capacidad":  tk.IntVar(value=cap_base),
+            "docentes":   tk.IntVar(value=3),
+            "laboratorio": tk.IntVar(value=0),
+        }
 
-                self.root.after(5, paso)
-            except StopIteration:
-                self._hd_finalizar(ag, gen_x, fit_y, best_y, t0)
+        campos = [
+            ("Demanda total a distribuir", "demanda",    1, 300),
+            ("Capacidad por aula",         "capacidad",  1, 120),
+            ("Docentes disponibles",       "docentes",   0,  20),
+        ]
+        for fila, (label, key, mn, mx) in enumerate(campos):
+            tk.Label(f_form, text=label, font=FUENTE_NORMAL, bg=BLANCO, fg=NEGRO
+                     ).grid(row=fila * 2, column=0, sticky="w", pady=(8, 0))
+            tk.Spinbox(f_form, from_=mn, to=mx, textvariable=self.ga2_vars[key],
+                       width=7, font=("Segoe UI", 10), justify="center"
+                       ).grid(row=fila * 2, column=1, sticky="e", pady=(8, 0))
 
-        paso()
+        tk.Label(f_form, text="Requiere laboratorio", font=FUENTE_NORMAL,
+                 bg=BLANCO, fg=NEGRO).grid(row=6, column=0, sticky="w", pady=(12, 0))
+        tk.Checkbutton(f_form, text="Sí (−15% capacidad)", variable=self.ga2_vars["laboratorio"],
+                       bg=BLANCO, fg=GRIS_TEXTO, font=("Segoe UI", 9)
+                       ).grid(row=6, column=1, sticky="e", pady=(12, 0))
 
-    # --- Actualizar gráfico de convergencia --------------------------------
-    def _hd_render_curva(self, gx, fy, by):
-        for w in self._hd_panel_graf.winfo_children():
-            w.destroy()
-        if self._hd_fig is not None:
-            plt.close(self._hd_fig)
+        # Derecha: resultados
+        f_res = tk.LabelFrame(cuerpo, text="Resultado del AG",
+                              font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO, padx=14, pady=14)
+        f_res.grid(row=0, column=1, sticky="nsew")
 
-        self._hd_fig, ax = plt.subplots(figsize=(8, 2.6))
-        self._hd_fig.patch.set_facecolor(BLANCO)
-        ax.set_facecolor("#F9F9F9")
-        ax.plot(gx, fy, label="Fitness Generación", color=ROJO_CLARO, alpha=0.55)
-        ax.plot(gx, by, label="Mejor Histórico", color=COLOR_OPTIMO, linewidth=2)
-        ax.set_title("Convergencia del Algoritmo Genético", fontsize=11, pad=8)
-        ax.set_xlabel("Generación", fontsize=9)
-        ax.set_ylabel("Fitness", fontsize=9)
-        ax.legend(loc="lower right", fontsize=8)
-        ax.grid(True, linestyle="--", alpha=0.4)
-        plt.tight_layout()
-        canvas = FigureCanvasTkAgg(self._hd_fig, master=self._hd_panel_graf)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.lbl_ga2_estado = tk.Label(
+            f_res,
+            text="Ejecuta el AG para ver la distribución óptima de secciones.",
+            font=("Segoe UI", 11, "italic"), bg=BLANCO, fg=GRIS_TEXTO,
+            wraplength=600, justify="left"
+        )
+        self.lbl_ga2_estado.pack(anchor="w", pady=(0, 10))
 
-    # --- Mostrar tabla de resultados y mensaje final ----------------------
-    def _hd_finalizar(self, ag, gx, fy, by, t0):
-        self._hd_render_curva(gx, fy, by)
-        cromosoma = ag.mejor_cromosoma
-        if cromosoma is None:
+        # KPIs resultado
+        self.frame_ga2_kpis = tk.Frame(f_res, bg=BLANCO)
+        self.frame_ga2_kpis.pack(fill="x", pady=(0, 12))
+
+        self.ga2_kpi_labels = {}
+        kpi_defs = [
+            ("Secciones (AG)",     "ag_sec"),
+            ("Secciones (Clásico)","cl_sec"),
+            ("Ocupación AG",       "ag_ocup"),
+            ("Total cupos AG",     "ag_cupos"),
+        ]
+        for idx, (titulo, clave) in enumerate(kpi_defs):
+            card = tk.Frame(self.frame_ga2_kpis, bg=BLANCO, bd=1, relief="solid", height=80)
+            card.grid(row=idx // 2, column=idx % 2, sticky="nsew", padx=5, pady=5)
+            card.grid_propagate(False)
+            self.frame_ga2_kpis.columnconfigure(idx % 2, weight=1)
+            tk.Label(card, text=titulo, font=("Segoe UI", 9), bg=BLANCO,
+                     fg=GRIS_TEXTO).pack(pady=(8, 1))
+            lbl = tk.Label(card, text="---", font=("Segoe UI", 17, "bold"),
+                           bg=BLANCO, fg=ROJO_UTP)
+            lbl.pack()
+            self.ga2_kpi_labels[clave] = lbl
+
+        self.lbl_ga2_detalle = tk.Label(
+            f_res, text="",
+            font=("Segoe UI", 10), bg=BLANCO, fg=GRIS_TEXTO,
+            wraplength=600, justify="left"
+        )
+        self.lbl_ga2_detalle.pack(anchor="w")
+
+    def _ejecutar_ga2(self):
+        try:
+            self.btn_ga2.config(state="disabled")
+            self.lbl_ga2_estado.config(text="⚙️ Ejecutando AG #2...", fg="#B8860B")
+            self.root.update_idletasks()
+        except tk.TclError:
             return
 
-        for item in self._hd_tree.get_children():
-            self._hd_tree.delete(item)
+        demanda   = self.ga2_vars["demanda"].get()
+        capacidad = self.ga2_vars["capacidad"].get()
+        docentes  = self.ga2_vars["docentes"].get()
+        lab       = self.ga2_vars["laboratorio"].get()
 
-        _, conflictos = ag.calcular_fitness(cromosoma)
+        cap_ef = max(1, int(capacidad * (0.85 if lab else 1.0)))
+        cap_cl = max(1, int(cap_ef * 0.90))
+        cl_sec = max(1, -(-demanda // cap_cl))  # ceil division
 
-        for i_sec, gen in enumerate(cromosoma):
-            ia, ih = ag.espacio[gen]
-            aula = ag.aulas[ia]
-            hor = ag.horarios[ih]
-            sec = ag.secciones[i_sec]
+        def _run():
+            res = ga_optimizar_secciones(demanda, cap_ef, docentes)
+            self.root.after(0, lambda: self._actualizar_ga2_ui(res, cl_sec, cap_ef))
 
-            flab = 0.85 if sec['laboratorio'] == 1 else 1.0
-            cap_ef = int(aula['capacidad_aula'] * flab)
-            ratio = sec['demanda'] / cap_ef
-            estado, _ = self._clasificar_ocupacion(ratio)
+        threading.Thread(target=_run, daemon=True).start()
 
-            self._hd_tree.insert("", "end", values=(
-                sec["sid"],
-                sec["curso"],
-                sec["docente_id"],
-                f"Aula {aula['aula_id']} ({aula.get('pabellon', '')})",
-                cap_ef,
-                f"{hor['dia']} ({hor['turno']})",
-                f"{ratio * 100:.1f}%",
-                f"{estado}  [{sec.get('cluster', '')}]"
+    def _actualizar_ga2_ui(self, res, cl_sec, cap_ef):
+        try:
+            self.btn_ga2.config(state="normal")
+            ag_sec  = res["n_secciones"]
+            ag_ocup = res["ocupacion"]
+            ag_cupos = res["total_cupos"]
+
+            color_ocup = COLOR_OPTIMO if 0.65 <= ag_ocup <= 0.90 else "#B8860B"
+            comp = ("igual al clásico" if ag_sec == cl_sec
+                    else f"AG sugiere {ag_sec} vs clásico {cl_sec}")
+
+            self.ga2_kpi_labels["ag_sec"].config(text=str(ag_sec), fg=ROJO_UTP)
+            self.ga2_kpi_labels["cl_sec"].config(text=str(cl_sec), fg=GRIS_TEXTO)
+            self.ga2_kpi_labels["ag_ocup"].config(text=f"{ag_ocup*100:.1f}%", fg=color_ocup)
+            self.ga2_kpi_labels["ag_cupos"].config(text=str(ag_cupos), fg=ROJO_UTP)
+
+            self.lbl_ga2_estado.config(
+                text=f"✔ Completado — {comp}  |  Factor de ocupación óptimo: {res['factor_ocupacion']*100:.0f}%",
+                fg=COLOR_OPTIMO
+            )
+            self.lbl_ga2_detalle.config(
+                text=(f"Cap. efectiva por aula: {cap_ef}  |  Cap. segura AG: {res['cap_segura']}\n"
+                      f"Fitness AG: {res['fitness']:.1f}")
+            )
+        except tk.TclError:
+            pass
+
+    # ==============================
+    # GA #3 — VISTA Y LÓGICA
+    # ==============================
+    def vista_optimizador_horarios(self):
+        self.limpiar_contenedor()
+
+        header = tk.Frame(self.contenedor_principal, bg=GRIS_FONDO)
+        header.pack(fill="x", pady=(18, 5), padx=28)
+
+        tk.Label(header, text="Optimizador de Horarios — Algoritmo Genético",
+                 font=("Segoe UI", 22, "bold"), bg=GRIS_FONDO, fg=NEGRO).pack(side="left")
+
+        self.btn_ejecutar_ga3 = tk.Button(
+            header, text="Ejecutar AG #3 🧬",
+            font=FUENTE_NORMAL, bg=ROJO_UTP, fg=BLANCO,
+            activebackground=ROJO_CLARO, activeforeground=BLANCO,
+            bd=0, padx=14, pady=8, cursor="hand2",
+            command=self._ejecutar_ga3
+        )
+        self.btn_ejecutar_ga3.pack(side="right")
+
+        tk.Label(
+            self.contenedor_principal,
+            text=("Asigna automáticamente los top 30 cursos más demandados a aulas y turnos, "
+                  "minimizando conflictos de aula, conflictos de docente y hacinamiento."),
+            font=("Segoe UI", 10), bg=GRIS_FONDO, fg=GRIS_TEXTO
+        ).pack(anchor="w", padx=30, pady=(0, 6))
+
+        self.lbl_ga3_estado = tk.Label(
+            self.contenedor_principal,
+            text="Estado: No ejecutado — presiona 'Ejecutar AG #3 🧬' para iniciar.",
+            font=("Segoe UI", 10, "italic"), bg=GRIS_FONDO, fg=GRIS_TEXTO
+        )
+        self.lbl_ga3_estado.pack(anchor="w", padx=30, pady=(0, 8))
+
+        frame_tabla_ga3 = tk.Frame(self.contenedor_principal, bg=BLANCO, bd=1, relief="solid")
+        frame_tabla_ga3.pack(fill="both", expand=True, padx=28, pady=(0, 18))
+
+        tk.Label(frame_tabla_ga3, text="Asignación Óptima de Cursos",
+                 font=FUENTE_SUBTITULO, bg=BLANCO, fg=NEGRO).pack(anchor="w", padx=20, pady=(12, 5))
+
+        cols_ga3 = ("curso", "aula_id", "pabellon", "turno", "demanda", "capacidad", "ocupacion", "estado")
+        anchos_ga3 = {"curso": 200, "aula_id": 80, "pabellon": 90, "turno": 90,
+                      "demanda": 80, "capacidad": 90, "ocupacion": 95, "estado": 130}
+        encabezados_ga3 = {"curso": "Curso", "aula_id": "Aula ID", "pabellon": "Pabellón",
+                           "turno": "Turno", "demanda": "Demanda", "capacidad": "Capacidad",
+                           "ocupacion": "Ocupación", "estado": "Estado"}
+
+        scroll_x_ga3 = ttk.Scrollbar(frame_tabla_ga3, orient="horizontal")
+        scroll_y_ga3 = ttk.Scrollbar(frame_tabla_ga3, orient="vertical")
+
+        self.tree_ga3 = ttk.Treeview(
+            frame_tabla_ga3, columns=cols_ga3, show="headings", height=20,
+            xscrollcommand=scroll_x_ga3.set, yscrollcommand=scroll_y_ga3.set
+        )
+        for col in cols_ga3:
+            self.tree_ga3.heading(col, text=encabezados_ga3[col])
+            self.tree_ga3.column(col, anchor="center", width=anchos_ga3[col], stretch=True)
+
+        scroll_x_ga3.config(command=self.tree_ga3.xview)
+        scroll_y_ga3.config(command=self.tree_ga3.yview)
+
+        self.tree_ga3.pack(side="left", fill="both", expand=True, padx=(15, 0), pady=(5, 15))
+        scroll_y_ga3.pack(side="right", fill="y", padx=(0, 5), pady=(5, 15))
+        scroll_x_ga3.pack(fill="x", padx=15, pady=(0, 5))
+
+    def _ejecutar_ga3(self):
+        try:
+            self.lbl_ga3_estado.config(
+                text="⚙️ Ejecutando AG #3... asignando cursos a (aula, turno).",
+                fg="#B8860B"
+            )
+            self.btn_ejecutar_ga3.config(state="disabled")
+            self.root.update_idletasks()
+        except tk.TclError:
+            return
+
+        def _run():
+            resumen, aulas, turnos, asignaciones, score = ga_horarios(self.df)
+            self.root.after(0, lambda: self._actualizar_ga3_ui(
+                resumen, aulas, turnos, asignaciones, score
             ))
 
-        dt = time.time() - t0
-        if not conflictos:
-            messagebox.showinfo(
-                "Optimización Completada",
-                f"Distribución optimizada sin conflictos.\n\n"
-                f"Generaciones: {len(gx)}\n"
-                f"Tiempo: {dt:.2f} s\n"
-                f"Fitness óptimo: {by[-1]:.6f}")
-        else:
-            messagebox.showwarning(
-                "Optimización con Advertencias",
-                f"Quedan {len(conflictos)} conflicto(s) tras {len(gx)} generaciones.\n\n"
-                + "\n".join(conflictos[:4])
-                + "\n\nSugerencia: aumente la población o las generaciones.")
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _actualizar_ga3_ui(self, resumen, aulas, turnos, asignaciones, score):
+        try:
+            self.btn_ejecutar_ga3.config(state="normal")
+            for item in self.tree_ga3.get_children():
+                self.tree_ga3.delete(item)
+
+            slot_count = {}
+            for ai, ti in asignaciones:
+                key = (ai, ti)
+                slot_count[key] = slot_count.get(key, 0) + 1
+            conflictos = sum(v - 1 for v in slot_count.values() if v > 1)
+
+            for i, (ai, ti) in enumerate(asignaciones):
+                curso = resumen["nombre_curso"].iloc[i]
+                dem = int(resumen["demanda"].iloc[i])
+                cap = int(aulas["capacidad_aula"].iloc[ai])
+                pab = str(aulas["pabellon"].iloc[ai])
+                turno = str(turnos[ti])
+                aula_id = str(aulas["aula_id"].iloc[ai])
+                ocup = dem / cap if cap > 0 else 2.0
+                estado, _ = self._clasificar_ocupacion(ocup)
+                self.tree_ga3.insert("", "end",
+                    values=(curso, aula_id, pab, turno, dem, cap,
+                            f"{ocup * 100:.1f}%", estado))
+
+            color_estado = COLOR_OPTIMO if conflictos == 0 else "#B8860B"
+            self.lbl_ga3_estado.config(
+                text=(f"✔ Completado — {len(asignaciones)} cursos asignados | "
+                      f"Conflictos de aula: {conflictos} | Fitness: {score:.0f}"),
+                fg=color_estado
+            )
+        except tk.TclError:
+            pass
 
 
 # ==============================
