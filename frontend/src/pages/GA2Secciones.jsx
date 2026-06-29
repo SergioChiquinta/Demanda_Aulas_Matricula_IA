@@ -1,38 +1,53 @@
 // src/pages/GA2Secciones.jsx
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
+import { useSimulacion } from '../context/SimulacionContext';
 import KPICard from '../components/KPICard';
 import OcupacionBadge from '../components/OcupacionBadge';
 import Spinner from '../components/Spinner';
 
-const DEFAULT = { demanda: 60, capacidad: 40, docentes: 3, laboratorio: false };
-
 export default function GA2Secciones() {
-  const [form,    setForm]    = useState(DEFAULT);
+  const { state: simState, derived } = useSimulacion();
+  const { hasValidResult, capacidadEfectiva, demandaPlan, docentesDisponibles } = derived;
+
   const [result,  setResult]  = useState(null);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
 
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  // Clave de los parámetros SSOT usados en la última ejecución
+  const lastParamsRef = useRef(null);
+  const ejecutandoRef = useRef(false);
 
-  const ejecutar = () => {
+  const ejecutar = (dp, ce, dd) => {
+    if (ejecutandoRef.current) return;
+    ejecutandoRef.current = true;
     setError(null);
     setLoading(true);
-    const capEf = Math.max(1, Math.floor(form.capacidad * (form.laboratorio ? 0.85 : 1.0)));
     api.post('/ga/secciones', {
-      demanda_plan:        form.demanda,
-      capacidad_efectiva:  capEf,
-      docentes_disponibles: form.docentes,
+      demanda_plan:         dp,
+      capacidad_efectiva:   ce,
+      docentes_disponibles: dd,
     })
-      .then(r => setResult({ ...r.data, cap_ef: capEf }))
+      .then(r => {
+        setResult({ ...r.data, cap_ef: ce });
+        lastParamsRef.current = `${dp}-${ce}-${dd}`;
+      })
       .catch(e => setError(e.response?.data?.error || e.message))
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); ejecutandoRef.current = false; });
   };
 
+  // Auto-ejecutar cuando los parámetros SSOT estén disponibles o cambien
+  useEffect(() => {
+    if (!hasValidResult) return;
+    const paramsKey = `${demandaPlan}-${capacidadEfectiva}-${docentesDisponibles}`;
+    if (lastParamsRef.current === paramsKey) return; // mismos parámetros, no re-ejecutar
+    ejecutar(demandaPlan, capacidadEfectiva, docentesDisponibles);
+  }, [hasValidResult, demandaPlan, capacidadEfectiva, docentesDisponibles]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Clásico: ceil(demanda / cap_segura)
-  const capEf     = Math.max(1, Math.floor(form.capacidad * (form.laboratorio ? 0.85 : 1.0)));
-  const capSegura = Math.max(1, Math.floor(capEf * 0.90));
-  const clasico   = Math.max(1, Math.ceil(form.demanda / capSegura));
+  const capSegura = hasValidResult ? Math.max(1, Math.floor(capacidadEfectiva * 0.90)) : 0;
+  const clasico   = hasValidResult ? Math.max(1, Math.ceil(demandaPlan / capSegura)) : 0;
 
   const ocup = result?.ocupacion ?? 0;
   const colorOcup = ocup >= 0.65 && ocup <= 0.90 ? '#2E7D32' : '#E65100';
@@ -44,44 +59,80 @@ export default function GA2Secciones() {
         <p>Optimiza el número de secciones y el factor de ocupación para minimizar hacinamiento y subutilización.</p>
       </div>
 
+      {/* Banner SSOT — requiere simulación ejecutada */}
+      {!hasValidResult ? (
+        <div className="alert alert-warning" style={{ marginBottom: 24 }}>
+          ⚠️ <strong>Simulación IA requerida.</strong> Este módulo consume los resultados de la simulación
+          como fuente única de datos (SSOT).{' '}
+          <Link to="/simulacion" style={{ fontWeight: 600 }}>
+            Ir a Simulación IA →
+          </Link>
+        </div>
+      ) : (
+        <div className="alert alert-info" style={{ marginBottom: 24 }}>
+          📊 Datos sincronizados desde Simulación IA —
+          Demanda: <strong>{demandaPlan}</strong> |
+          Cap. efectiva: <strong>{capacidadEfectiva}</strong> |
+          Docentes: <strong>{docentesDisponibles}</strong> |
+          Escenario: <strong>{simState.result.escenario}</strong>
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', gap: 24 }}>
-        {/* Form */}
+        {/* Panel de parámetros (solo lectura, derivados del SSOT) */}
         <div className="card" style={{ height: 'fit-content' }}>
-          <div className="card-header"><h3>Parámetros de entrada</h3></div>
+          <div className="card-header"><h3>Parámetros (desde Simulación IA)</h3></div>
           <div className="card-body">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {[
-                ['demanda',   'Demanda total',     1, 300],
-                ['capacidad', 'Capacidad por aula',1, 120],
-                ['docentes',  'Docentes disponibles',0, 20],
-              ].map(([key, label, min, max]) => (
-                <div className="form-group" key={key}>
+                ['Demanda planificada',   demandaPlan   ?? '—'],
+                ['Capacidad efectiva',    capacidadEfectiva],
+                ['Docentes disponibles',  docentesDisponibles],
+              ].map(([label, value]) => (
+                <div className="form-group" key={label}>
                   <label>{label}</label>
                   <input
-                    type="number" min={min} max={max} value={form[key]}
-                    onChange={e => set(key, parseInt(e.target.value) || 0)}
+                    type="number"
+                    value={value}
+                    readOnly
+                    disabled
+                    style={{ opacity: 0.7, cursor: 'not-allowed' }}
                   />
                 </div>
               ))}
+
               <div className="form-group">
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input
                     type="checkbox"
-                    checked={form.laboratorio}
-                    onChange={e => set('laboratorio', e.target.checked)}
+                    checked={simState.form.laboratorio === 1}
+                    disabled
+                    style={{ cursor: 'not-allowed' }}
                   />
-                  Requiere laboratorio (−15% capacidad)
+                  Laboratorio (−15% capacidad)
                 </label>
               </div>
 
-              <div style={{ padding: '10px 0', borderTop: '1px solid #eee', fontSize: 12, color: '#888' }}>
-                Cap. efectiva: <strong>{capEf}</strong> | Cap. segura (90%): <strong>{capSegura}</strong>
-                <br/>Clásico (ceil): <strong>{clasico} secciones</strong>
-              </div>
+              {hasValidResult && (
+                <div style={{ padding: '10px 0', borderTop: '1px solid #eee', fontSize: 12, color: '#888' }}>
+                  Cap. segura (90%): <strong>{capSegura}</strong>
+                  <br/>Clásico (ceil): <strong>{clasico} secciones</strong>
+                </div>
+              )}
 
-              <button className="btn btn-primary" onClick={ejecutar} disabled={loading}>
-                {loading ? '⚙️ Ejecutando AG #2...' : '🧬 Ejecutar AG #2'}
+              <button
+                className="btn btn-primary"
+                onClick={() => hasValidResult && ejecutar(demandaPlan, capacidadEfectiva, docentesDisponibles)}
+                disabled={loading || !hasValidResult}
+              >
+                {loading ? '⚙️ Ejecutando AG #2...' : '🔄 Re-ejecutar AG #2'}
               </button>
+
+              {!hasValidResult && (
+                <p style={{ fontSize: 12, color: '#aaa', textAlign: 'center', marginTop: 4 }}>
+                  Ejecuta la Simulación IA primero.
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -109,7 +160,7 @@ export default function GA2Secciones() {
 
               {result.deficit_docentes > 0 && (
                 <div className="alert alert-danger">
-                  ⚠️ Déficit de {result.deficit_docentes} docente(s). El AG calculó {result.n_secciones} secciones pero solo hay {form.docentes} disponibles.
+                  ⚠️ Déficit de {result.deficit_docentes} docente(s). El AG calculó {result.n_secciones} secciones pero solo hay {docentesDisponibles} disponibles.
                 </div>
               )}
 
@@ -150,10 +201,22 @@ export default function GA2Secciones() {
             </>
           )}
 
-          {!result && !loading && (
+          {!result && !loading && hasValidResult && (
             <div className="card">
               <div className="card-body" style={{ textAlign: 'center', padding: '40px 0', color: '#aaa' }}>
-                Ejecuta el AG para ver la distribución óptima de secciones.
+                Ejecutando automáticamente...
+              </div>
+            </div>
+          )}
+
+          {!result && !loading && !hasValidResult && (
+            <div className="card">
+              <div className="card-body" style={{ textAlign: 'center', padding: '40px 0', color: '#aaa' }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🔒</div>
+                <p>Los parámetros se sincronizan desde <strong>Simulación IA</strong>.</p>
+                <p style={{ fontSize: 12, marginTop: 8 }}>
+                  Ejecuta primero una simulación para habilitar este módulo.
+                </p>
               </div>
             </div>
           )}

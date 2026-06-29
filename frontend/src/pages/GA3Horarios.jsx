@@ -1,22 +1,36 @@
 // src/pages/GA3Horarios.jsx
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
+import { useSimulacion } from '../context/SimulacionContext';
 import OcupacionBadge from '../components/OcupacionBadge';
 import Spinner from '../components/Spinner';
 
 export default function GA3Horarios() {
+  const { state: simState, derived } = useSimulacion();
+  const { hasValidResult, demandaPlan, ocupacionPromedio, aulasRecomendadas } = derived;
+
   const [result,  setResult]  = useState(null);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
 
+  const ejecutandoRef = useRef(false);
+
   const ejecutar = () => {
+    if (ejecutandoRef.current) return;
+    ejecutandoRef.current = true;
     setError(null);
     setLoading(true);
     api.post('/ga/horarios')
       .then(r => setResult(r.data))
       .catch(e => setError(e.response?.data?.error || e.message))
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); ejecutandoRef.current = false; });
   };
+
+  // Auto-ejecutar al montar
+  useEffect(() => {
+    ejecutar();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
@@ -28,6 +42,25 @@ export default function GA3Horarios() {
         </p>
       </div>
 
+      {/* Banner contextual SSOT */}
+      {hasValidResult ? (
+        <div className="alert alert-info" style={{ marginBottom: 20 }}>
+          📊 Simulación activa —
+          Demanda: <strong>{demandaPlan}</strong> |
+          Aulas recomendadas: <strong>{aulasRecomendadas}</strong> |
+          Ocupación: <strong>{(ocupacionPromedio * 100).toFixed(1)}%</strong> |
+          Escenario: <strong>{simState.result.escenario}</strong>
+        </div>
+      ) : (
+        <div className="alert alert-warning" style={{ marginBottom: 20 }}>
+          ⚠️ No hay simulación ejecutada.{' '}
+          <Link to="/simulacion" style={{ fontWeight: 600 }}>
+            Ir a Simulación IA
+          </Link>{' '}
+          para establecer el contexto del escenario. El AG opera sobre los top-30 cursos del dataset.
+        </div>
+      )}
+
       {/* Controls */}
       <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 24, flexWrap: 'wrap' }}>
         <button
@@ -36,7 +69,7 @@ export default function GA3Horarios() {
           disabled={loading}
           style={{ fontSize: 15, padding: '12px 28px' }}
         >
-          {loading ? '⚙️ Ejecutando AG #3... (puede tardar ~20s)' : '🧬 Ejecutar AG #3 — Timetabling'}
+          {loading ? '⚙️ Ejecutando AG #3... (puede tardar ~20s)' : '🔄 Re-ejecutar AG #3 — Timetabling'}
         </button>
 
         {result && (
@@ -117,7 +150,7 @@ export default function GA3Horarios() {
         <div className="card">
           <div className="card-body" style={{ textAlign: 'center', padding: '60px 0', color: '#aaa' }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>🗓️</div>
-            <p>Presiona <strong>"Ejecutar AG #3"</strong> para generar el horario óptimo.</p>
+            <p>Ejecutando automáticamente...</p>
             <p style={{ fontSize: 12, marginTop: 8 }}>El algoritmo puede tardar entre 10 y 30 segundos.</p>
           </div>
         </div>

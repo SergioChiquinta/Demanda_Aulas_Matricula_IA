@@ -39,7 +39,7 @@ def ga_seleccion_variables(df: pd.DataFrame, pop_size: int = 20, n_gen: int = 30
         pred = Ridge(alpha=1.0).fit(X_tr[:, idx], y_tr).predict(X_te[:, idx])
         return -mean_absolute_error(y_te, pred)
 
-    pop = [list(np.random.randint(0, 2, n)) for _ in range(pop_size)]
+    pop = [[int(x) for x in np.random.randint(0, 2, n)] for _ in range(pop_size)]
     best_ind, best_score = pop[0][:], fitness(pop[0])
 
     history = []

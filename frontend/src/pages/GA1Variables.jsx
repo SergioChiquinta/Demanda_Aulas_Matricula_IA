@@ -1,28 +1,39 @@
 // src/pages/GA1Variables.jsx
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
+import { useSimulacion } from '../context/SimulacionContext';
 import Spinner from '../components/Spinner';
 
 export default function GA1Variables() {
+  const { state: simState, derived } = useSimulacion();
+  const { hasValidResult, demandaPlan } = derived;
+
   const [candidatas, setCandidatas] = useState([]);
   const [result,     setResult]     = useState(null);
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState(null);
 
-  useEffect(() => {
-    api.get('/ga/candidatas')
-      .then(r => setCandidatas(r.data.candidatas))
-      .catch(() => {});
-  }, []);
+  const ejecutandoRef = useRef(false);
 
   const ejecutar = () => {
+    if (ejecutandoRef.current) return;
+    ejecutandoRef.current = true;
     setError(null);
     setLoading(true);
     api.post('/ga/variables')
       .then(r => setResult(r.data))
       .catch(e => setError(e.response?.data?.error || e.message))
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); ejecutandoRef.current = false; });
   };
+
+  // Cargar candidatas + auto-ejecutar al montar
+  useEffect(() => {
+    api.get('/ga/candidatas')
+      .then(r => setCandidatas(r.data.candidatas))
+      .catch(() => {});
+    ejecutar();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const mejora = result ? result.mejora : null;
 
@@ -35,6 +46,23 @@ export default function GA1Variables() {
           del modelo Ridge (split 80/20) usando un Algoritmo Genético evolutivo.
         </p>
       </div>
+
+      {/* Banner contextual SSOT */}
+      {hasValidResult ? (
+        <div className="alert alert-info" style={{ marginBottom: 20 }}>
+          📊 Simulación activa — Demanda planificada: <strong>{demandaPlan}</strong> alumnos
+          (escenario: {simState.result.escenario}).
+          El AG evaluará las variables sobre el dataset completo.
+        </div>
+      ) : (
+        <div className="alert alert-warning" style={{ marginBottom: 20 }}>
+          ⚠️ No hay simulación ejecutada.{' '}
+          <Link to="/simulacion" style={{ fontWeight: 600 }}>
+            Ir a Simulación IA
+          </Link>{' '}
+          para establecer los parámetros del escenario.
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
         {/* Candidatas */}
@@ -65,7 +93,7 @@ export default function GA1Variables() {
               onClick={ejecutar}
               disabled={loading}
             >
-              {loading ? '⚙️ Ejecutando AG... (puede tardar ~10s)' : '🧬 Ejecutar AG #1'}
+              {loading ? '⚙️ Ejecutando AG... (puede tardar ~10s)' : '🔄 Re-ejecutar AG #1'}
             </button>
           </div>
         </div>
@@ -79,7 +107,7 @@ export default function GA1Variables() {
 
             {!result && !loading && (
               <p style={{ color: '#888', fontStyle: 'italic' }}>
-                Ejecuta el AG para ver qué variables selecciona el algoritmo genético.
+                Ejecutando automáticamente...
               </p>
             )}
 

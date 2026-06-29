@@ -1,16 +1,10 @@
 // src/pages/Simulacion.jsx
 import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from 'recharts';
-import api from '../api/client';
+import { useSimulacion } from '../context/SimulacionContext';
 import KPICard from '../components/KPICard';
 import OcupacionBadge from '../components/OcupacionBadge';
 import Spinner from '../components/Spinner';
-
-const DEFAULT = {
-  alumnos_nuevos: 25, alumnos_prerrequisito: 20, alumnos_repitentes: 8,
-  capacidad_aula: 40, duracion_semanas: 18, docentes_disponibles: 2,
-  laboratorio: 0, escenario: 'Conservador (+MAE)',
-};
 
 const colorEstado = (ocup) => {
   if (ocup > 1)     return '#D32F2F';
@@ -21,24 +15,21 @@ const colorEstado = (ocup) => {
 };
 
 export default function Simulacion() {
-  const [form,    setForm]    = useState(DEFAULT);
-  const [result,  setResult]  = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState(null);
+  const { state, setField, resetForm, ejecutarSimulacion } = useSimulacion();
+  const { form, result, status, error } = state;
+  const loading = status === 'loading';
+
   const [showDetalle, setShowDetalle] = useState(false);
 
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
   const ejecutar = () => {
-    setError(null);
-    setLoading(true);
-    api.post('/prediccion/simular', form)
-      .then(r => { setResult(r.data); setShowDetalle(false); })
-      .catch(e => setError(e.response?.data?.error || e.message))
-      .finally(() => setLoading(false));
+    ejecutarSimulacion();
+    setShowDetalle(false);
   };
 
-  const resetear = () => { setForm(DEFAULT); setResult(null); setError(null); };
+  const resetear = () => {
+    resetForm();
+    setShowDetalle(false);
+  };
 
   const barData = result ? [
     { name: 'IA',         valor: result.pred_base,      fill: '#8B0000' },
@@ -80,7 +71,7 @@ export default function Simulacion() {
                   <label>{label}</label>
                   <input
                     type="number" min={min} max={max} value={form[key]}
-                    onChange={e => set(key, parseInt(e.target.value) || 0)}
+                    onChange={e => setField(key, parseInt(e.target.value) || 0)}
                   />
                 </div>
               ))}
@@ -90,7 +81,7 @@ export default function Simulacion() {
                   <input
                     type="checkbox"
                     checked={form.laboratorio === 1}
-                    onChange={e => set('laboratorio', e.target.checked ? 1 : 0)}
+                    onChange={e => setField('laboratorio', e.target.checked ? 1 : 0)}
                   />
                   Requiere laboratorio (−15% capacidad)
                 </label>
@@ -98,7 +89,7 @@ export default function Simulacion() {
 
               <div className="form-group">
                 <label>Escenario de planificación</label>
-                <select value={form.escenario} onChange={e => set('escenario', e.target.value)}>
+                <select value={form.escenario} onChange={e => setField('escenario', e.target.value)}>
                   <option>Conservador (+MAE)</option>
                   <option>Base IA</option>
                   <option>Optimista (-MAE)</option>
