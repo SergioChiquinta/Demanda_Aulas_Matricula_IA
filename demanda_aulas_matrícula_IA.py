@@ -39,7 +39,7 @@ DB_CONFIG = {
     "host": "127.0.0.1",
     "port": 3306,
     "user": "root",
-    "password": "",
+    "password": "1234",
     "database": "demanda_aulas_matricula_ia",
     "charset": "utf8mb4",
     "use_pure": True,
@@ -1849,7 +1849,6 @@ Recomendación:
 
         except Exception as e:
             messagebox.showerror("Error", f"Datos inválidos o incompletos.\n\nDetalle técnico: {e}")
-
 
     # ==============================
     # GA #1 — VISTA DEDICADA
