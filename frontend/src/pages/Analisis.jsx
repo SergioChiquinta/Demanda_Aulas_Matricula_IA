@@ -15,9 +15,9 @@ const ROL_COLOR = {
 };
 
 const ROL_LABEL = {
-  subutilizado: '🟡 Subutilización',
-  optimo:       '🟢 Eficiencia',
-  sobrepoblado: '🔴 Hacinamiento',
+  subutilizado: 'Subutilización',
+  optimo:       'Eficiencia',
+  sobrepoblado: 'Hacinamiento',
 };
 
 const INTERPRETACION = {
@@ -108,11 +108,16 @@ export default function Analisis() {
               </p>
             </div>
             <div className="card-body">
-              <ResponsiveContainer width="100%" height={300}>
-                <ScatterChart>
+              <ResponsiveContainer width="100%" height={370}>
+                <ScatterChart margin={{
+                    top: 20,
+                    right: 25,
+                    left: 30,
+                    bottom: 10
+                }}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="x" name={varX} type="number" label={{ value: varX.replace(/_/g,' '), position: 'insideBottom', offset: -5, fontSize: 11 }} />
-                  <YAxis dataKey="y" name={varY} type="number" label={{ value: varY.replace(/_/g,' '), angle: -90, position: 'insideLeft', fontSize: 11 }} />
+                  <XAxis dataKey="x" name={varX} type="number" label={{ value: varX.replace(/_/g,' '), position: 'bottom', offset: 0, fontSize: 11 }} />
+                  <YAxis dataKey="y" name={varY} type="number" label={{ value: varY.replace(/_/g,' '), angle: -90, position: 'left', fontSize: 11 }} />
                   <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                   {result.clusters.map(c => (
                     <Scatter
@@ -123,7 +128,14 @@ export default function Analisis() {
                       opacity={0.75}
                     />
                   ))}
-                  <Legend />
+                  <Legend height={30} 
+                    verticalAlign="bottom"
+                    align="center"
+                    iconType="circle"
+                    wrapperStyle={{
+                        paddingTop: 15
+                    }}
+                  />
                 </ScatterChart>
               </ResponsiveContainer>
             </div>
@@ -135,14 +147,26 @@ export default function Analisis() {
               <h3>Método del Codo — Validación de K=3</h3>
             </div>
             <div className="card-body">
-              <ResponsiveContainer width="100%" height={300}>
-                <ComposedChart data={codoData}>
+              <ResponsiveContainer width="100%" height={370}>
+                <ComposedChart data={codoData} margin={{
+                    top: 20,
+                    right: 20,
+                    left: 30,
+                    bottom: 0
+                }}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="k" label={{ value: 'Clusters (K)', position: 'insideBottom', offset: -5, fontSize: 11 }} />
-                  <YAxis yAxisId="left" label={{ value: 'Inercia', angle: -90, position: 'insideLeft', fontSize: 11 }} />
-                  <YAxis yAxisId="right" orientation="right" label={{ value: 'Mejora %', angle: 90, position: 'insideRight', fontSize: 11 }} />
+                  <XAxis dataKey="k" label={{ value: 'Clusters (K)', position: 'bottom', offset: 0, fontSize: 11 }} />
+                  <YAxis yAxisId="left" label={{ value: 'Inercia', angle: -90, position: 'left', offset: 20, fontSize: 11 }} />
+                  <YAxis yAxisId="right" orientation="right" label={{ value: 'Mejora %', angle: 90, position: 'right', offset: 0, fontSize: 11 }} />
                   <Tooltip />
-                  <Legend />
+                  <Legend height={30} 
+                    verticalAlign="bottom"
+                    align="center"
+                    iconType="circle"
+                    wrapperStyle={{
+                        paddingTop: 15
+                    }}
+                  />
                   <ReferenceLine yAxisId="left" x={3} stroke="#2E7D32" strokeDasharray="4 4" />
                   <Line yAxisId="left" type="monotone" dataKey="inercia" stroke="#8B0000" strokeWidth={2} dot={{ r: 4 }} name="Inercia" />
                   <Bar yAxisId="right" dataKey="mejora" fill="#2E7D32" opacity={0.3} name="Mejora %" />
@@ -165,7 +189,7 @@ export default function Analisis() {
           <div className="card-body">
             {result.clusters.map(c => (
               <div key={c.cluster_id} style={{ marginBottom: 20 }}>
-                <div style={{ fontWeight: 700, fontSize: 15, color: ROL_COLOR[c.rol], marginBottom: 6 }}>
+                <div style={{ fontWeight: 700, fontSize: 15, color: ROL_COLOR[c.rol], paddingTop: 10, marginBottom: 1 }}>
                   {ROL_LABEL[c.rol]} (Cluster {c.cluster_id})
                 </div>
                 <p style={{ fontSize: 13, color: '#555', lineHeight: 1.7, marginBottom: 4 }}>

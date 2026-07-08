@@ -48,7 +48,7 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <p>dev-sergio branch<br />Node.js · React · FastAPI · MySQL</p>
+        <p>main branch<br />Node.js · React · FastAPI · MySQL</p>
       </div>
     </aside>
   );
