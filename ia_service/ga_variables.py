@@ -18,15 +18,16 @@ COLUMNAS_FEATURES_GA = [
 ]
 
 
-def ga_seleccion_variables(df: pd.DataFrame, pop_size: int = 20, n_gen: int = 30,
-                            mutation_rate: float = 0.15) -> dict:
+def ga_seleccion_variables(df: pd.DataFrame, candidatas: list = None, pop_size: int = 20,
+                            n_gen: int = 30, mutation_rate: float = 0.15) -> dict:
     """
-    GA #1 — Selecciona el subconjunto de COLUMNAS_FEATURES_GA que minimiza
-    MAE (Ridge, split 80/20).
+    GA #1 — Selecciona el subconjunto de variables (por defecto COLUMNAS_FEATURES_GA,
+    o la lista pasada en `candidatas`) que minimiza MAE (Ridge, split 80/20).
 
     Devuelve dict con las features seleccionadas y el MAE obtenido.
     """
-    candidatas = [c for c in COLUMNAS_FEATURES_GA if c in df.columns]
+    universo = candidatas if candidatas is not None else COLUMNAS_FEATURES_GA
+    candidatas = [c for c in universo if c in df.columns]
     n = len(candidatas)
     y = df["alumnos_matriculados"].values
     X_all = df[candidatas].values

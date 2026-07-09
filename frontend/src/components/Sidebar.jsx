@@ -5,17 +5,11 @@ const NAV = [
   {
     section: 'Principal',
     items: [
-      { to: '/',         icon: '📊', label: 'Dashboard Resumen' },
-      { to: '/analisis', icon: '📈', label: 'Análisis de Aforos' },
-      { to: '/simulacion',icon: '🤖', label: 'Simulación IA' },
-    ],
-  },
-  {
-    section: 'Algoritmos Genéticos',
-    items: [
-      { to: '/ga1', icon: '🧬', label: 'AG-1 Variables' },
-      { to: '/ga2', icon: '🧬', label: 'AG-2 Secciones' },
-      { to: '/ga3', icon: '🧬', label: 'AG-3 Horarios' },
+      { to: '/',           icon: '📊', label: 'Dashboard Resumen' },
+      { to: '/analisis',   icon: '📈', label: 'Análisis de Aforos' },
+      { to: '/prediccion', icon: '🤖', label: 'Predicción IA' },
+      { to: '/secciones',  icon: '🏫', label: 'Secciones' },
+      { to: '/horarios',   icon: '🗓️', label: 'Horarios' },
     ],
   },
 ];

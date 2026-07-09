@@ -15,10 +15,18 @@ FEATURES = [
 ]
 
 _modelos: dict | None = None
+_features_activas: list | None = None
+
+
+def set_features_activas(features: list) -> None:
+    """Fija el subconjunto de FEATURES elegido por AG #1 (calibración en el arranque)."""
+    global _features_activas
+    _features_activas = [f for f in features if f in FEATURES] or FEATURES
 
 
 def _entrenar(df: pd.DataFrame) -> dict:
-    X = df[FEATURES].values
+    features = _features_activas or FEATURES
+    X = df[features].values
     y = df["alumnos_matriculados"].values
     X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
 
@@ -54,8 +62,9 @@ def predecir(df: pd.DataFrame, payload: dict) -> dict:
     modelo_activo = modelos["Regresión Lineal Múltiple"]["modelo"]
     mae = modelos["Regresión Lineal Múltiple"]["MAE"]
     rmse = modelos["Regresión Lineal Múltiple"]["RMSE"]
+    features = _features_activas or FEATURES
 
-    entrada = pd.DataFrame([{
+    valores_completos = {
         "alumnos_nuevos":       payload.get("alumnos_nuevos", 0),
         "alumnos_prerrequisito": payload.get("alumnos_prerrequisito", 0),
         "alumnos_repitentes":   payload.get("alumnos_repitentes", 0),
@@ -63,7 +72,8 @@ def predecir(df: pd.DataFrame, payload: dict) -> dict:
         "capacidad_aula":       payload.get("capacidad_aula", 40),
         "duracion_semanas":     payload.get("duracion_semanas", 18),
         "laboratorio":          payload.get("laboratorio", 0),
-    }])
+    }
+    entrada = pd.DataFrame([{k: valores_completos[k] for k in features}])
 
     pred_base = max(0, int(round(float(modelo_activo.predict(entrada)[0]))))
     pred_min  = max(0, int(np.floor(pred_base - mae)))

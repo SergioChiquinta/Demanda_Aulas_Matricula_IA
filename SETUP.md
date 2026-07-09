@@ -244,7 +244,7 @@ npm run dev
 ## Puertos y URLs
 
 |     Servicio      |             URL              |        Descripción        |
-|-------------------|------------------------------|---------------------------|
+|-------------------|------------------------------|----------------------------|
 | React (Frontend)  |   `http://localhost:5173`    |   Interfaz web principal  |
 | Node.js (Backend) |   `http://localhost:3001`    |          API REST         |
 |   FastAPI (IA)    |   `http://localhost:8000`    | Microservicio de IA y GAs |
@@ -255,14 +255,17 @@ npm run dev
 
 ## Módulos disponibles en la interfaz
 
-|       Módulo       |      Ruta     |              Descripción               |
-|--------------------|---------------|----------------------------------------|
-|      Dashboard     |       `/`     |  KPIs históricos + tabla de matrículas |
-| Análisis de Aforos |   `/analisis` |  Clustering K-Means K=3 con gráficos   |
-|    Simulación IA   | `/simulacion` |  Predicción con Regresión Lineal/Ridge |
-|    AG-1 Variables  |     `/ga1`    |    Selección óptima de features (GA)   |
-|    AG-2 Secciones  |     `/ga2`    | Optimización de distribución de aulas  |
-|    AG-3 Horarios   |     `/ga3`    | Timetabling automático (top 30 cursos) |
+| Módulo | Ruta | Descripción |
+|--------|------|-------------|
+| Dashboard Resumen | `/` | KPIs históricos + tabla de matrículas |
+| Análisis de Aforos | `/analisis` | Clustering K-Means K=3 con gráficos |
+| Predicción IA | `/prediccion` | Predicción con Regresión Lineal/Ridge |
+| Secciones | `/secciones` | Optimización de distribución de aulas (AG), encadenada con Predicción IA |
+| Horarios | `/horarios` | Timetabling automático, encadenado con Secciones |
+
+> La selección de variables predictoras (antes "AG-1") ya no es una vista: se ejecuta una sola vez
+> al arrancar el microservicio Python para calibrar el modelo de Predicción IA y así dar mayor
+> precisión a Secciones y Horarios.
 
 ---
 
