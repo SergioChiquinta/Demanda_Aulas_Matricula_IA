@@ -1,4 +1,4 @@
-import pandas as pd
+﻿import pandas as pd
 import mysql.connector
 import numpy as np
 import random
@@ -11,6 +11,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.cluster import KMeans
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+import random
+import time
 
 # ==============================
 # PALETA DE COLORES UTP & DISEÑO
@@ -37,7 +39,7 @@ DB_CONFIG = {
     "host": "127.0.0.1",
     "port": 3306,
     "user": "root",
-    "password": "",
+    "password": "1234",
     "database": "demanda_aulas_matricula_ia",
     "charset": "utf8mb4",
     "use_pure": True,
@@ -1847,8 +1849,6 @@ Recomendación:
 
         except Exception as e:
             messagebox.showerror("Error", f"Datos inválidos o incompletos.\n\nDetalle técnico: {e}")
-
-
 
     # ==============================
     # GA #1 — VISTA DEDICADA
