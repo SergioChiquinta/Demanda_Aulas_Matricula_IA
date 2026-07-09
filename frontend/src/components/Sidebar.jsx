@@ -12,7 +12,14 @@ const NAV = [
       { to: '/horarios',   icon: '🗓️', label: 'Horarios' },
     ],
   },
+  {
+    section: 'IA Clásica',
+    items: [
+      { to: '/planificador', icon: '🧠', label: 'Planificador IA' },
+    ],
+  },
 ];
+
 
 export default function Sidebar() {
   return (

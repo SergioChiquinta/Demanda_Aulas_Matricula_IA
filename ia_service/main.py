@@ -14,6 +14,8 @@ from ml_model import predecir, get_metricas, get_modelos, set_features_activas, 
 from cluster_service import ejecutar_clustering
 from ga_secciones import ga_optimizar_secciones
 from ga_horarios import ga_horarios, ga_horarios_secciones
+# ── Motor Inteligente de Planificación (nuevo módulo IA Clásica) ──
+from planner import PlanificadorInteligente
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -165,5 +167,121 @@ def ga3_horarios(req: HorariosRequest = HorariosRequest()):
             secciones = [s.model_dump() for s in req.secciones]
             return ga_horarios_secciones(df, secciones, req.curso_nombre)
         return ga_horarios(df)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ══════════════════════════════════════════════════════════════════
+# MOTOR INTELIGENTE DE PLANIFICACIÓN — IA Clásica (Espacios de Estados)
+# Nuevos endpoints que se activan DESPUÉS de la predicción ML.
+# No modifican ningún endpoint existente.
+# ══════════════════════════════════════════════════════════════════
+
+# ── Pydantic Models del Planificador ─────────────────────────────
+class AulaInput(BaseModel):
+    id: str
+    capacidad: int
+    pabellon: str = "-"
+
+
+class PlannerRequest(BaseModel):
+    """Payload para los endpoints del Motor Inteligente de Planificación."""
+    demanda_predicha: int = 45          # alumnos a planificar (viene del ML)
+    docentes_disponibles: int = 3       # docentes con los que se cuenta
+    aulas: list[AulaInput] | None = None       # None = usar aulas del dataset
+    horarios: list[str] | None = None          # None = usar turnos del dataset
+
+
+# ── Instancia singleton del planificador ──────────────────────────
+_planificador = PlanificadorInteligente()
+
+
+def _resolver_aulas(req: PlannerRequest) -> list[dict]:
+    """
+    Si el request no trae aulas, carga las reales desde el DataFrame
+    cacheado en MySQL para máximo realismo.
+    """
+    if req.aulas:
+        return [a.model_dump() for a in req.aulas]
+    # Usar aulas reales del dataset
+    df = get_df()
+    aulas_df = (
+        df[["aula_id", "capacidad_aula", "pabellon"]]
+        .drop_duplicates("aula_id")
+        .head(20)  # limitar para evitar explosión combinatoria
+        .reset_index(drop=True)
+    )
+    return [
+        {"id": str(row["aula_id"]), "capacidad": int(row["capacidad_aula"]), "pabellon": str(row["pabellon"])}
+        for _, row in aulas_df.iterrows()
+    ]
+
+
+def _resolver_horarios(req: PlannerRequest) -> list[str]:
+    """Si el request no trae horarios, usa los turnos reales del dataset."""
+    if req.horarios:
+        return req.horarios
+    df = get_df()
+    return sorted(df["horario_seccion"].dropna().unique().tolist())
+
+
+@app.post("/ml/planner/bfs")
+def planner_bfs(req: PlannerRequest):
+    """
+    Ejecuta BFS (Búsqueda en Anchura) sobre el espacio de estados
+    del problema de asignación de aulas.
+    Garantiza el camino de MENOR NÚMERO DE PASOS.
+    """
+    try:
+        aulas = _resolver_aulas(req)
+        horarios = _resolver_horarios(req)
+        return _planificador.planificar(
+            demanda_predicha=req.demanda_predicha,
+            aulas=aulas,
+            docentes_disponibles=req.docentes_disponibles,
+            horarios=horarios,
+            algoritmo="bfs",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/ml/planner/dfs")
+def planner_dfs(req: PlannerRequest):
+    """
+    Ejecuta DFS (Búsqueda en Profundidad) sobre el espacio de estados.
+    Encuentra una solución rápidamente, no garantiza optimalidad.
+    """
+    try:
+        aulas = _resolver_aulas(req)
+        horarios = _resolver_horarios(req)
+        return _planificador.planificar(
+            demanda_predicha=req.demanda_predicha,
+            aulas=aulas,
+            docentes_disponibles=req.docentes_disponibles,
+            horarios=horarios,
+            algoritmo="dfs",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/ml/planner/astar")
+def planner_astar(req: PlannerRequest):
+    """
+    Ejecuta A* con f(n) = g(n) + h(n) sobre el espacio de estados.
+    Con heurística admisible garantiza el camino de MENOR COSTO TOTAL.
+    Es el algoritmo recomendado para planificación óptima.
+    """
+    try:
+        aulas = _resolver_aulas(req)
+        horarios = _resolver_horarios(req)
+        return _planificador.planificar(
+            demanda_predicha=req.demanda_predicha,
+            aulas=aulas,
+            docentes_disponibles=req.docentes_disponibles,
+            horarios=horarios,
+            algoritmo="astar",
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

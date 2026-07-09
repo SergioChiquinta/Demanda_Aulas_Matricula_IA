@@ -7,6 +7,8 @@ import Analisis     from './pages/Analisis';
 import PrediccionIA from './pages/PrediccionIA';
 import Secciones    from './pages/Secciones';
 import Horarios     from './pages/Horarios';
+// Motor Inteligente de Planificación (nuevo módulo IA Clásica)
+import PlanificadorIA from './pages/PlanificadorIA';
 
 export default function App() {
   return (
@@ -21,6 +23,8 @@ export default function App() {
               <Route path="/prediccion" element={<PrediccionIA />} />
               <Route path="/secciones"  element={<Secciones />} />
               <Route path="/horarios"   element={<Horarios />} />
+              {/* Motor Inteligente de Planificación (nuevo módulo IA Clásica) */}
+              <Route path="/planificador" element={<PlanificadorIA />} />
             </Routes>
           </main>
         </div>
