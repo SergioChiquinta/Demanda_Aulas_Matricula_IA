@@ -7,6 +7,8 @@ const datosRoutes     = require('./routes/datos.routes');
 const analisisRoutes  = require('./routes/analisis.routes');
 const prediccionRoutes= require('./routes/prediccion.routes');
 const gaRoutes        = require('./routes/ga.routes');
+// Motor Inteligente de Planificación (nuevo módulo IA Clásica)
+const plannerRoutes   = require('./routes/planner.routes');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -26,6 +28,7 @@ app.use('/api/datos',      datosRoutes);
 app.use('/api/analisis',   analisisRoutes);
 app.use('/api/prediccion', prediccionRoutes);
 app.use('/api/ga',         gaRoutes);
+app.use('/api/planner',    plannerRoutes);   // Motor Inteligente de Planificación
 
 // Health check
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', port: PORT }));
