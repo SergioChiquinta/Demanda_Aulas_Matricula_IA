@@ -129,4 +129,110 @@ def ga_horarios(df: pd.DataFrame, pop_size: int = 40,
         "n_cursos":     n_c,
         "n_aulas":      n_a,
         "n_turnos":     n_t,
+        "modo":         "top30",
+    }
+
+
+def ga_horarios_secciones(df: pd.DataFrame, secciones: list, curso_nombre: str = None,
+                           pop_size: int = 40, n_gen: int = 60,
+                           mutation_rate: float = 0.05) -> dict:
+    """
+    GA #3 (modo pipeline) — Asigna a (aula, turno) real las secciones que
+    AG #2 decidió para el curso simulado, en vez de operar sobre un top-30
+    desconectado. Reutiliza el mismo esquema de cromosoma/fitness que
+    ga_horarios, pero el "curso" aquí es cada sección de AG #2.
+    """
+    aulas = (
+        df[["aula_id", "capacidad_aula", "pabellon"]]
+        .drop_duplicates("aula_id")
+        .reset_index(drop=True)
+    )
+    turnos = sorted(df["horario_seccion"].dropna().unique().tolist())
+
+    n_c, n_a, n_t = len(secciones), len(aulas), len(turnos)
+    if n_c == 0 or n_a == 0 or n_t == 0:
+        return {"asignaciones": [], "conflictos": 0, "score": 0.0, "modo": "pipeline"}
+
+    caps = aulas["capacidad_aula"].values
+    dems = np.array([int(s["alumnos"]) for s in secciones])
+
+    def fitness(ind):
+        a_idx, t_idx = ind[:n_c], ind[n_c:]
+        s = 0.0
+        for i in range(n_c):
+            for j in range(i + 1, n_c):
+                if a_idx[i] == a_idx[j] and t_idx[i] == t_idx[j]:
+                    s -= 800
+        for i in range(n_c):
+            ocup = dems[i] / caps[a_idx[i]] if caps[a_idx[i]] > 0 else 2.0
+            if ocup > 1.0:
+                s -= (ocup - 1.0) * 600
+            elif 0.65 <= ocup <= 0.90:
+                s += 100
+            elif ocup < 0.40:
+                s -= (0.40 - ocup) * 150
+        return s
+
+    gene_len = 2 * n_c
+    pop = [
+        list(np.random.randint(0, n_a, n_c)) + list(np.random.randint(0, n_t, n_c))
+        for _ in range(pop_size)
+    ]
+    best_ind, best_score = pop[0][:], fitness(pop[0])
+
+    for _ in range(n_gen):
+        scores = [fitness(ind) for ind in pop]
+        gen_best = max(range(pop_size), key=lambda i: scores[i])
+        if scores[gen_best] > best_score:
+            best_score, best_ind = scores[gen_best], pop[gen_best][:]
+        sorted_p = sorted(range(pop_size), key=lambda i: scores[i], reverse=True)
+        new_pop  = [pop[sorted_p[0]][:], pop[sorted_p[1]][:]]
+        while len(new_pop) < pop_size:
+            t1 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            t2 = max(random.sample(range(pop_size), 3), key=lambda i: scores[i])
+            pt    = random.randint(1, gene_len - 1)
+            child = pop[t1][:pt] + pop[t2][pt:]
+            for k in range(gene_len):
+                if random.random() < mutation_rate:
+                    child[k] = (
+                        random.randint(0, n_a - 1) if k < n_c
+                        else random.randint(0, n_t - 1)
+                    )
+            new_pop.append(child)
+        pop = new_pop
+
+    a_asig, t_asig = best_ind[:n_c], best_ind[n_c:]
+
+    slot_count: dict = {}
+    for ai, ti in zip(a_asig, t_asig):
+        key = (int(ai), int(ti))
+        slot_count[key] = slot_count.get(key, 0) + 1
+    conflictos = sum(v - 1 for v in slot_count.values() if v > 1)
+
+    asignaciones = []
+    for i, (ai, ti) in enumerate(zip(a_asig, t_asig)):
+        dem = int(dems[i])
+        cap = int(caps[ai])
+        ocup = dem / cap if cap > 0 else 2.0
+        nombre_sec = secciones[i].get("seccion", f"S{i + 1}")
+        curso_label = f"{curso_nombre} · {nombre_sec}" if curso_nombre else f"Sección {nombre_sec}"
+        asignaciones.append({
+            "curso":     curso_label,
+            "aula_id":   str(aulas["aula_id"].iloc[ai]),
+            "pabellon":  str(aulas["pabellon"].iloc[ai]),
+            "turno":     str(turnos[ti]),
+            "demanda":   dem,
+            "capacidad": cap,
+            "ocupacion": round(ocup, 4),
+            "estado":    _clasificar_ocupacion(ocup),
+        })
+
+    return {
+        "asignaciones": asignaciones,
+        "conflictos":   conflictos,
+        "score":        round(float(best_score), 2),
+        "n_cursos":     n_c,
+        "n_aulas":      n_a,
+        "n_turnos":     n_t,
+        "modo":         "pipeline",
     }

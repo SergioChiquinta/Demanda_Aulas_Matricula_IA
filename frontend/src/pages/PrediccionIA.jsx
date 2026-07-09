@@ -1,28 +1,28 @@
-// src/pages/Simulacion.jsx
+// src/pages/PrediccionIA.jsx
 import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from 'recharts';
-import { useSimulacion } from '../context/SimulacionContext';
+import { usePrediccion } from '../context/PrediccionContext';
 import KPICard from '../components/KPICard';
 import OcupacionBadge from '../components/OcupacionBadge';
 import Spinner from '../components/Spinner';
 
 const colorEstado = (ocup) => {
-  if (ocup > 1)     return '#D32F2F';
+  if (ocup > 1) return '#D32F2F';
   if (ocup >= 0.90) return '#E65100';
   if (ocup >= 0.65) return '#2E7D32';
   if (ocup >= 0.45) return '#F57F17';
   return '#F9A825';
 };
 
-export default function Simulacion() {
-  const { state, setField, resetForm, ejecutarSimulacion } = useSimulacion();
+export default function PrediccionIA() {
+  const { state, setField, resetForm, ejecutarPrediccion } = usePrediccion();
   const { form, result, status, error } = state;
   const loading = status === 'loading';
 
   const [showDetalle, setShowDetalle] = useState(false);
 
   const ejecutar = () => {
-    ejecutarSimulacion();
+    ejecutarPrediccion();
     setShowDetalle(false);
   };
 
@@ -32,24 +32,24 @@ export default function Simulacion() {
   };
 
   const barData = result ? [
-    { name: 'IA',         valor: result.pred_base,      fill: '#8B0000' },
-    { name: 'Planificada',valor: result.demanda_plan,   fill: '#D32F2F' },
-    { name: 'Cupos',      valor: result.capacidad_total,fill: '#2E7D32' },
+    { name: 'IA', valor: result.pred_base, fill: '#8B0000' },
+    { name: 'Planificada', valor: result.demanda_plan, fill: '#D32F2F' },
+    { name: 'Cupos', valor: result.capacidad_total, fill: '#2E7D32' },
   ] : [];
 
   const ocup = result?.ocupacion_promedio ?? 0;
   const estadoGeneral =
-    result?.deficit_docentes > 0  ? '🔴 CRÍTICO OPERATIVO' :
-    ocup > 1                       ? '🔴 CRÍTICO POR AFORO' :
-    ocup >= 0.90                   ? '🟠 AJUSTADO' :
-    ocup >= 0.65                   ? '🟢 ÓPTIMO' :
-    ocup >= 0.45                   ? '🟡 BAJA OCUPACIÓN' :
-                                     '🟡 SUBUTILIZADO';
+    result?.deficit_docentes > 0 ? '🔴 CRÍTICO OPERATIVO' :
+      ocup > 1 ? '🔴 CRÍTICO POR AFORO' :
+        ocup >= 0.90 ? '🟠 AJUSTADO' :
+          ocup >= 0.65 ? '🟢 ÓPTIMO' :
+            ocup >= 0.45 ? '🟡 BAJA OCUPACIÓN' :
+              '🟡 SUBUTILIZADO';
 
   return (
     <div>
       <div className="page-header">
-        <h2>Simulador Predictivo de Carga de Aulas</h2>
+        <h2>Predicción IA — Carga de Aulas</h2>
         <p>Evalúa demanda estimada, aulas necesarias, ocupación y disponibilidad docente.</p>
       </div>
 
@@ -60,12 +60,12 @@ export default function Simulacion() {
           <div className="card-body">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {[
-                ['alumnos_nuevos',        'Alumnos nuevos',           0, 120],
-                ['alumnos_prerrequisito', 'Con prerrequisito',        0, 120],
-                ['alumnos_repitentes',    'Repitentes',               0, 80],
-                ['capacidad_aula',        'Capacidad por aula',       1, 120],
-                ['duracion_semanas',      'Duración (semanas)',        1, 24],
-                ['docentes_disponibles',  'Docentes disponibles',     0, 20],
+                ['alumnos_nuevos', 'Alumnos nuevos', 0, 120],
+                ['alumnos_prerrequisito', 'Con prerrequisito', 0, 120],
+                ['alumnos_repitentes', 'Repitentes', 0, 80],
+                ['capacidad_aula', 'Capacidad por aula', 1, 120],
+                ['duracion_semanas', 'Duración (semanas)', 1, 24],
+                ['docentes_disponibles', 'Docentes disponibles', 0, 20],
               ].map(([key, label, min, max]) => (
                 <div className="form-group" key={key}>
                   <label>{label}</label>
@@ -128,10 +128,10 @@ export default function Simulacion() {
 
               {/* KPIs */}
               <div className="kpi-grid">
-                <KPICard label="Demanda IA"           value={result.pred_base} />
+                <KPICard label="Demanda IA" value={result.pred_base} />
                 <KPICard label="Demanda a planificar" value={result.demanda_plan} />
-                <KPICard label="Aulas recomendadas"   value={result.aulas_recomendadas} accent={colorEstado(ocup)} />
-                <KPICard label="Ocupación promedio"   value={`${(ocup * 100).toFixed(1)}%`} accent={colorEstado(ocup)} />
+                <KPICard label="Aulas recomendadas" value={result.aulas_recomendadas} accent={colorEstado(ocup)} />
+                <KPICard label="Ocupación promedio" value={`${(ocup * 100).toFixed(1)}%`} accent={colorEstado(ocup)} />
               </div>
 
               {/* Gráfico */}
@@ -147,7 +147,7 @@ export default function Simulacion() {
                       <ReferenceLine y={result.capacidad_efectiva} stroke="#888" strokeDasharray="4 4"
                         label={{ value: `Cap. efectiva: ${result.capacidad_efectiva}`, fontSize: 11, fill: '#888' }} />
                       {barData.map(d => (
-                        <Bar key={d.name} dataKey="valor" fill={d.fill} radius={[4,4,0,0]} isAnimationActive />
+                        <Bar key={d.name} dataKey="valor" fill={d.fill} radius={[4, 4, 0, 0]} isAnimationActive />
                       ))}
                       <Bar dataKey="valor" />
                     </BarChart>
@@ -157,7 +157,7 @@ export default function Simulacion() {
 
               {/* Tabla secciones */}
               <div className="card">
-                <div className="card-header"><h3>Distribución sugerida por sección</h3></div>
+                <div className="card-header" style={{ padding: '10px 10px 10px 10px' }}><h3>Distribución sugerida por sección</h3></div>
                 <div className="card-body" style={{ padding: 0 }}>
                   <div className="table-wrap">
                     <table>
@@ -176,9 +176,9 @@ export default function Simulacion() {
                             <td>{(s.ocupacion * 100).toFixed(1)}%</td>
                             <td><OcupacionBadge estado={
                               s.ocupacion > 1 ? 'Excede aforo' :
-                              s.ocupacion >= 0.90 ? 'Ajustado' :
-                              s.ocupacion >= 0.65 ? 'Óptimo' :
-                              s.ocupacion >= 0.45 ? 'Baja ocupación' : 'Subutilizado'
+                                s.ocupacion >= 0.90 ? 'Ajustado' :
+                                  s.ocupacion >= 0.65 ? 'Óptimo' :
+                                    s.ocupacion >= 0.45 ? 'Baja ocupación' : 'Subutilizado'
                             } /></td>
                           </tr>
                         ))}
@@ -198,7 +198,7 @@ export default function Simulacion() {
                 <div className="card">
                   <div className="card-body">
                     <pre style={{ fontSize: 13, lineHeight: 1.8, color: '#444', whiteSpace: 'pre-wrap', fontFamily: 'Inter, sans-serif' }}>
-{`📊 RESULTADO EJECUTIVO
+                      {`📊 RESULTADO EJECUTIVO
 Estado: ${estadoGeneral}
 
 📌 DEMANDA ESTIMADA
@@ -228,7 +228,7 @@ Estado: ${estadoGeneral}
           {!result && !loading && (
             <div className="card">
               <div className="card-body spinner-wrap">
-                <p>Configura los parámetros y ejecuta la simulación.</p>
+                <p>Configura los parámetros y ejecuta la predicción.</p>
               </div>
             </div>
           )}

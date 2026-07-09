@@ -1,4 +1,4 @@
-// src/context/SimulacionContext.jsx
+// src/context/PrediccionContext.jsx
 import { createContext, useContext, useReducer, useMemo, useCallback } from 'react';
 import api from '../api/client';
 
@@ -32,6 +32,7 @@ const INITIAL_STATE = {
   status:       'idle',   // 'idle' | 'loading' | 'success' | 'error'
   error:        null,
   lastSyncedAt: null,
+  ga2Result:    null,     // salida de Secciones, encadenada hacia Horarios
 };
 
 // ── Validación de campo con clamping ────────────────────────
@@ -55,7 +56,7 @@ function validateResult(data) {
 }
 
 // ── Reducer puro ────────────────────────────────────────────
-function simulacionReducer(state, action) {
+function prediccionReducer(state, action) {
   switch (action.type) {
     case 'SET_FIELD': {
       const { key, value } = action.payload;
@@ -70,7 +71,10 @@ function simulacionReducer(state, action) {
       return { ...INITIAL_STATE };
 
     case 'FETCH_START':
-      return { ...state, status: 'loading', error: null };
+      return { ...state, status: 'loading', error: null, ga2Result: null };
+
+    case 'SET_GA2_RESULT':
+      return { ...state, ga2Result: action.payload };
 
     case 'FETCH_SUCCESS': {
       const result = action.payload;
@@ -98,10 +102,10 @@ function simulacionReducer(state, action) {
 }
 
 // ── Context ─────────────────────────────────────────────────
-const SimulacionContext = createContext(null);
+const PrediccionContext = createContext(null);
 
-export function SimulacionProvider({ children }) {
-  const [state, dispatch] = useReducer(simulacionReducer, INITIAL_STATE);
+export function PrediccionProvider({ children }) {
+  const [state, dispatch] = useReducer(prediccionReducer, INITIAL_STATE);
 
   // ── Acciones memoizadas ─────────────────────────────────
   const setField = useCallback((key, value) => {
@@ -112,7 +116,11 @@ export function SimulacionProvider({ children }) {
     dispatch({ type: 'RESET_FORM' });
   }, []);
 
-  const ejecutarSimulacion = useCallback(async () => {
+  const setGa2Result = useCallback((payload) => {
+    dispatch({ type: 'SET_GA2_RESULT', payload });
+  }, []);
+
+  const ejecutarPrediccion = useCallback(async () => {
     dispatch({ type: 'FETCH_START' });
     try {
       const res = await api.post('/prediccion/simular', state.form);
@@ -125,7 +133,7 @@ export function SimulacionProvider({ children }) {
 
   // ── Valores derivados memoizados ────────────────────────
   const derived = useMemo(() => {
-    const { form, result, status } = state;
+    const { form, result, status, ga2Result } = state;
     const factorLab = form.laboratorio === 1 ? 0.85 : 1.0;
     const capacidadEfectiva = Math.max(1, Math.floor(form.capacidad_aula * factorLab));
 
@@ -136,6 +144,8 @@ export function SimulacionProvider({ children }) {
       hasValidResult:       status === 'success' && result !== null,
       ocupacionPromedio:    result?.ocupacion_promedio ?? null,
       aulasRecomendadas:    result?.aulas_recomendadas ?? null,
+      ga2Result,
+      hasGa2Result:         ga2Result !== null && Array.isArray(ga2Result?.secciones),
     };
   }, [state]);
 
@@ -144,22 +154,23 @@ export function SimulacionProvider({ children }) {
     dispatch,
     setField,
     resetForm,
-    ejecutarSimulacion,
+    setGa2Result,
+    ejecutarPrediccion,
     derived,
-  }), [state, setField, resetForm, ejecutarSimulacion, derived]);
+  }), [state, setField, resetForm, setGa2Result, ejecutarPrediccion, derived]);
 
   return (
-    <SimulacionContext.Provider value={value}>
+    <PrediccionContext.Provider value={value}>
       {children}
-    </SimulacionContext.Provider>
+    </PrediccionContext.Provider>
   );
 }
 
 // ── Hook de consumo ─────────────────────────────────────────
-export function useSimulacion() {
-  const ctx = useContext(SimulacionContext);
+export function usePrediccion() {
+  const ctx = useContext(PrediccionContext);
   if (!ctx) {
-    throw new Error('useSimulacion debe usarse dentro de <SimulacionProvider>');
+    throw new Error('usePrediccion debe usarse dentro de <PrediccionProvider>');
   }
   return ctx;
 }

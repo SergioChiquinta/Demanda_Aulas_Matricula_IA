@@ -64,10 +64,10 @@ export default function Dashboard() {
       </div>
 
       <div className="card">
-        <div className="card-header">
-          <h3>Últimos Registros Históricos</h3>
+        <div className="card-header" style={{ padding: '10px 10px 10px 10px' }}>
+          <h3>Últimos 100 Registros Históricos</h3>
         </div>
-        <div className="card-body" style={{ padding: '0 0 0' }}>
+        <div className="card-body" style={{ padding: '0px 0px 0px 0px' }}>
           <div className="table-wrap">
             <table>
               <thead>

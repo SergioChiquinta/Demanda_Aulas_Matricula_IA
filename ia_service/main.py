@@ -9,11 +9,11 @@ from contextlib import asynccontextmanager
 import logging
 
 from data_loader import cargar_datos, get_df
-from ga_variables import COLUMNAS_FEATURES_GA, ga_seleccion_variables
-from ml_model import predecir, get_metricas, get_modelos
+from ga_variables import ga_seleccion_variables
+from ml_model import predecir, get_metricas, get_modelos, set_features_activas, FEATURES
 from cluster_service import ejecutar_clustering
 from ga_secciones import ga_optimizar_secciones
-from ga_horarios import ga_horarios
+from ga_horarios import ga_horarios, ga_horarios_secciones
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,10 +21,19 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Carga datos y entrena modelos al arrancar."""
+    """Carga datos, calibra variables (AG #1) y entrena modelos al arrancar."""
     logger.info("Cargando datos desde MySQL...")
     df = cargar_datos()
     logger.info(f"Dataset cargado: {len(df)} registros.")
+
+    logger.info("Calibrando variables del modelo (AG #1)...")
+    calibracion = ga_seleccion_variables(df, candidatas=FEATURES)
+    set_features_activas(calibracion["features_seleccionadas"])
+    logger.info(
+        f"Variables activas: {calibracion['features_seleccionadas']} "
+        f"(MAE AG: {calibracion['mae_ga']})"
+    )
+
     get_modelos(df)
     logger.info("Modelos entrenados y listos.")
     yield
@@ -61,6 +70,18 @@ class SeccionesRequest(BaseModel):
     demanda_plan: int
     capacidad_efectiva: int
     docentes_disponibles: int = 1
+
+
+class SeccionItem(BaseModel):
+    seccion: str
+    alumnos: int
+    capacidad: int | None = None
+    ocupacion: float | None = None
+
+
+class HorariosRequest(BaseModel):
+    secciones: list[SeccionItem] | None = None
+    curso_nombre: str | None = None
 
 
 # ── Endpoints ────────────────────────────────────────────────
@@ -113,29 +134,8 @@ def predict(req: PredictRequest):
 
 
 # ── GA Endpoints ──────────────────────────────────────────────
-@app.get("/ml/ga/candidatas")
-def ga_candidatas():
-    df = get_df()
-    return {
-        "candidatas": [
-            {"nombre": c, "disponible": c in df.columns}
-            for c in COLUMNAS_FEATURES_GA
-        ]
-    }
-
-
-@app.post("/ml/ga/variables")
-def ga1_variables():
-    """GA #1 — Puede tardar 5-15 segundos."""
-    try:
-        df = get_df()
-        metricas = get_metricas(df)
-        resultado = ga_seleccion_variables(df)
-        resultado["mae_base"] = metricas["lineal"]["MAE"]
-        resultado["mejora"] = round(metricas["lineal"]["MAE"] - resultado["mae_ga"], 4)
-        return resultado
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# AG #1 (variables) ya no se expone como endpoint: se ejecuta una sola vez
+# al arrancar el servicio (ver lifespan) para calibrar el modelo de predicción.
 
 
 @app.post("/ml/ga/secciones")
@@ -152,10 +152,18 @@ def ga2_secciones(req: SeccionesRequest):
 
 
 @app.post("/ml/ga/horarios")
-def ga3_horarios():
-    """GA #3 — Timetabling. Puede tardar 10-30 segundos."""
+def ga3_horarios(req: HorariosRequest = HorariosRequest()):
+    """
+    GA #3 — Timetabling. Puede tardar 10-30 segundos.
+    Si recibe `secciones` (salida de AG #2), asigna aula/turno real
+    exactamente a esas secciones (modo pipeline, encadenado con AG #2).
+    Si no, opera de forma standalone sobre el top-30 del dataset.
+    """
     try:
         df = get_df()
+        if req.secciones:
+            secciones = [s.model_dump() for s in req.secciones]
+            return ga_horarios_secciones(df, secciones, req.curso_nombre)
         return ga_horarios(df)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

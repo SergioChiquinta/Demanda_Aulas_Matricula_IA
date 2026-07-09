@@ -1,19 +1,19 @@
-// src/pages/GA2Secciones.jsx
+// src/pages/Secciones.jsx
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
-import { useSimulacion } from '../context/SimulacionContext';
+import { usePrediccion } from '../context/PrediccionContext';
 import KPICard from '../components/KPICard';
 import OcupacionBadge from '../components/OcupacionBadge';
 import Spinner from '../components/Spinner';
 
-export default function GA2Secciones() {
-  const { state: simState, derived } = useSimulacion();
+export default function Secciones() {
+  const { state: predState, derived, setGa2Result } = usePrediccion();
   const { hasValidResult, capacidadEfectiva, demandaPlan, docentesDisponibles } = derived;
 
-  const [result,  setResult]  = useState(null);
+  const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState(null);
+  const [error, setError] = useState(null);
 
   // Clave de los parámetros SSOT usados en la última ejecución
   const lastParamsRef = useRef(null);
@@ -25,12 +25,13 @@ export default function GA2Secciones() {
     setError(null);
     setLoading(true);
     api.post('/ga/secciones', {
-      demanda_plan:         dp,
-      capacidad_efectiva:   ce,
+      demanda_plan: dp,
+      capacidad_efectiva: ce,
       docentes_disponibles: dd,
     })
       .then(r => {
         setResult({ ...r.data, cap_ef: ce });
+        setGa2Result(r.data);
         lastParamsRef.current = `${dp}-${ce}-${dd}`;
       })
       .catch(e => setError(e.response?.data?.error || e.message))
@@ -47,7 +48,7 @@ export default function GA2Secciones() {
 
   // Clásico: ceil(demanda / cap_segura)
   const capSegura = hasValidResult ? Math.max(1, Math.floor(capacidadEfectiva * 0.90)) : 0;
-  const clasico   = hasValidResult ? Math.max(1, Math.ceil(demandaPlan / capSegura)) : 0;
+  const clasico = hasValidResult ? Math.max(1, Math.ceil(demandaPlan / capSegura)) : 0;
 
   const ocup = result?.ocupacion ?? 0;
   const colorOcup = ocup >= 0.65 && ocup <= 0.90 ? '#2E7D32' : '#E65100';
@@ -55,39 +56,39 @@ export default function GA2Secciones() {
   return (
     <div>
       <div className="page-header">
-        <h2>AG #2 — Optimización de Distribución de Secciones</h2>
+        <h2>Optimización de Distribución de Secciones</h2>
         <p>Optimiza el número de secciones y el factor de ocupación para minimizar hacinamiento y subutilización.</p>
       </div>
 
-      {/* Banner SSOT — requiere simulación ejecutada */}
+      {/* Banner SSOT — requiere predicción ejecutada */}
       {!hasValidResult ? (
         <div className="alert alert-warning" style={{ marginBottom: 24 }}>
-          ⚠️ <strong>Simulación IA requerida.</strong> Este módulo consume los resultados de la simulación
+          ⚠️ <strong>Predicción IA requerida.</strong> Este módulo consume los resultados de la predicción
           como fuente única de datos (SSOT).{' '}
-          <Link to="/simulacion" style={{ fontWeight: 600 }}>
-            Ir a Simulación IA →
+          <Link to="/prediccion" style={{ fontWeight: 600 }}>
+            Ir a Predicción IA →
           </Link>
         </div>
       ) : (
         <div className="alert alert-info" style={{ marginBottom: 24 }}>
-          📊 Datos sincronizados desde Simulación IA —
+          📊 Datos sincronizados desde Predicción IA —
           Demanda: <strong>{demandaPlan}</strong> |
           Cap. efectiva: <strong>{capacidadEfectiva}</strong> |
           Docentes: <strong>{docentesDisponibles}</strong> |
-          Escenario: <strong>{simState.result.escenario}</strong>
+          Escenario: <strong>{predState.result.escenario}</strong>
         </div>
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', gap: 24 }}>
         {/* Panel de parámetros (solo lectura, derivados del SSOT) */}
         <div className="card" style={{ height: 'fit-content' }}>
-          <div className="card-header"><h3>Parámetros (desde Simulación IA)</h3></div>
+          <div className="card-header"><h3>Parámetros (desde Predicción IA)</h3></div>
           <div className="card-body">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {[
-                ['Demanda planificada',   demandaPlan   ?? '—'],
-                ['Capacidad efectiva',    capacidadEfectiva],
-                ['Docentes disponibles',  docentesDisponibles],
+                ['Demanda planificada', demandaPlan ?? '—'],
+                ['Capacidad efectiva', capacidadEfectiva],
+                ['Docentes disponibles', docentesDisponibles],
               ].map(([label, value]) => (
                 <div className="form-group" key={label}>
                   <label>{label}</label>
@@ -105,7 +106,7 @@ export default function GA2Secciones() {
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input
                     type="checkbox"
-                    checked={simState.form.laboratorio === 1}
+                    checked={predState.form.laboratorio === 1}
                     disabled
                     style={{ cursor: 'not-allowed' }}
                   />
@@ -116,7 +117,7 @@ export default function GA2Secciones() {
               {hasValidResult && (
                 <div style={{ padding: '10px 0', borderTop: '1px solid #eee', fontSize: 12, color: '#888' }}>
                   Cap. segura (90%): <strong>{capSegura}</strong>
-                  <br/>Clásico (ceil): <strong>{clasico} secciones</strong>
+                  <br />Clásico (ceil): <strong>{clasico} secciones</strong>
                 </div>
               )}
 
@@ -125,12 +126,12 @@ export default function GA2Secciones() {
                 onClick={() => hasValidResult && ejecutar(demandaPlan, capacidadEfectiva, docentesDisponibles)}
                 disabled={loading || !hasValidResult}
               >
-                {loading ? '⚙️ Ejecutando AG #2...' : '🔄 Re-ejecutar AG #2'}
+                {loading ? '⚙️ Optimizando secciones...' : '🔄 Re-ejecutar optimización'}
               </button>
 
               {!hasValidResult && (
                 <p style={{ fontSize: 12, color: '#aaa', textAlign: 'center', marginTop: 4 }}>
-                  Ejecuta la Simulación IA primero.
+                  Ejecuta la Predicción IA primero.
                 </p>
               )}
             </div>
@@ -139,33 +140,33 @@ export default function GA2Secciones() {
 
         {/* Results */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {error   && <div className="alert alert-danger">{error}</div>}
+          {error && <div className="alert alert-danger">{error}</div>}
           {loading && <Spinner text="Optimizando distribución de secciones..." />}
 
           {result && (
             <>
               <div className={`alert ${result.n_secciones === clasico ? 'alert-info' : 'alert-success'}`}>
                 {result.n_secciones === clasico
-                  ? `El AG confirma el resultado clásico: ${result.n_secciones} secciones.`
-                  : `AG sugiere ${result.n_secciones} secciones vs ${clasico} del método clásico.`}
+                  ? `El optimizador confirma el resultado clásico: ${result.n_secciones} secciones.`
+                  : `El optimizador sugiere ${result.n_secciones} secciones vs ${clasico} del método clásico.`}
                 {' '}Factor de ocupación óptimo: {(result.factor_ocupacion * 100).toFixed(0)}%
               </div>
 
               <div className="kpi-grid">
-                <KPICard label="Secciones (AG)"      value={result.n_secciones} accent="#8B0000" />
-                <KPICard label="Secciones (Clásico)" value={clasico}             accent="#888" />
-                <KPICard label="Ocupación AG"         value={`${(ocup * 100).toFixed(1)}%`} accent={colorOcup} />
-                <KPICard label="Total Cupos AG"       value={result.total_cupos} accent="#8B0000" />
+                <KPICard label="Secciones (óptimo)" value={result.n_secciones} accent="#8B0000" />
+                <KPICard label="Secciones (Clásico)" value={clasico} accent="#888" />
+                <KPICard label="Ocupación óptima" value={`${(ocup * 100).toFixed(1)}%`} accent={colorOcup} />
+                <KPICard label="Total Cupos" value={result.total_cupos} accent="#8B0000" />
               </div>
 
               {result.deficit_docentes > 0 && (
                 <div className="alert alert-danger">
-                  ⚠️ Déficit de {result.deficit_docentes} docente(s). El AG calculó {result.n_secciones} secciones pero solo hay {docentesDisponibles} disponibles.
+                  ⚠️ Déficit de {result.deficit_docentes} docente(s). Se calcularon {result.n_secciones} secciones pero solo hay {docentesDisponibles} disponibles.
                 </div>
               )}
 
               <div className="card">
-                <div className="card-header"><h3>Distribución sugerida</h3></div>
+                <div className="card-header" style={{ padding: '10px 10px 10px 10px' }}><h3>Distribución sugerida</h3></div>
                 <div className="card-body" style={{ padding: 0 }}>
                   <div className="table-wrap">
                     <table>
@@ -175,10 +176,10 @@ export default function GA2Secciones() {
                       <tbody>
                         {result.secciones?.map(s => {
                           const estado =
-                            s.ocupacion > 1     ? 'Excede aforo' :
-                            s.ocupacion >= 0.90 ? 'Ajustado' :
-                            s.ocupacion >= 0.65 ? 'Óptimo' :
-                            s.ocupacion >= 0.45 ? 'Baja ocupación' : 'Subutilizado';
+                            s.ocupacion > 1 ? 'Excede aforo' :
+                              s.ocupacion >= 0.90 ? 'Ajustado' :
+                                s.ocupacion >= 0.65 ? 'Óptimo' :
+                                  s.ocupacion >= 0.45 ? 'Baja ocupación' : 'Subutilizado';
                           return (
                             <tr key={s.seccion}>
                               <td>{s.seccion}</td>
@@ -196,7 +197,7 @@ export default function GA2Secciones() {
               </div>
 
               <div style={{ fontSize: 12, color: '#aaa' }}>
-                Fitness AG: {result.fitness} | Cap. segura AG: {result.cap_segura}
+                Fitness: {result.fitness} | Cap. segura: {result.cap_segura}
               </div>
             </>
           )}
@@ -213,9 +214,9 @@ export default function GA2Secciones() {
             <div className="card">
               <div className="card-body" style={{ textAlign: 'center', padding: '40px 0', color: '#aaa' }}>
                 <div style={{ fontSize: 40, marginBottom: 12 }}>🔒</div>
-                <p>Los parámetros se sincronizan desde <strong>Simulación IA</strong>.</p>
+                <p>Los parámetros se sincronizan desde <strong>Predicción IA</strong>.</p>
                 <p style={{ fontSize: 12, marginTop: 8 }}>
-                  Ejecuta primero una simulación para habilitar este módulo.
+                  Ejecuta primero una predicción para habilitar este módulo.
                 </p>
               </div>
             </div>
