@@ -161,7 +161,7 @@ npm install
 
 Paquetes que se instalan:
 
-|    Paquete     |                 Uso                   |
+|    Paquete      |                 Uso                   |
 |-----------------|---------------------------------------|
 | `express`       |             Framework web             |
 | `mysql2`        |        Pool de conexiones MySQL       |
@@ -198,15 +198,15 @@ npm install
 
 Paquetes principales:
 
-|        Paquete        |                Uso                 |
-|-----------------------|------------------------------------|
-| `react` + `react-dom` |            Framework UI            |
-|  `react-router-dom`   |      Navegación entre páginas      |
-|       `recharts`      | Gráficos (scatter, barras, líneas) |
-|        `axios`        |      Llamadas HTTP al backend      |
-|        `jspdf`        |   Generación de PDF (horarios)     |
+|        Paquete        |                     Uso                     |
+|-----------------------|---------------------------------------------|
+| `react` + `react-dom` |                 Framework UI                |
+|  `react-router-dom`   |          Navegación entre páginas           |
+|       `recharts`      |     Gráficos (scatter, barras, líneas)      |
+|        `axios`        |            Llamadas HTTP al backend         |
+|        `jspdf`        |          Generación de PDF (horarios)       |
 |     `html2canvas`     | Captura de la grilla de horario para el PDF |
-|        `vite`         |  Bundler y servidor de desarrollo  |
+|        `vite`         |        Bundler y servidor de desarrollo     |
 
 ### 4.2 Arrancar el servidor de desarrollo
 
@@ -241,11 +241,11 @@ generadas de fábrica. Después del primer login como admin:
 
 ## Credenciales de prueba
 
-| Rol | Email | Contraseña |
-|-----|-------|------------|
-| Administrativo (Sergio) | `u22201712@utp.edu.pe` | `sergio123*` |
+|                       Rol                         |          Email         |    Contraseña    |
+|---------------------------------------------------|------------------------|------------------|
+|             Administrativo (Sergio)               | `u22201712@utp.edu.pe` |   `sergio123*`   |
 | Estudiante — Ing. Sistemas e Informática, ciclo 1 | `u20250001@utp.edu.pe` | `estudiante123*` |
-| Estudiante — Ing. de Software, ciclo 1 | `u20250301@utp.edu.pe` | `estudiante123*` |
+|      Estudiante — Ing. de Software, ciclo 1       | `u20250301@utp.edu.pe` | `estudiante123*` |
 
 Los 600 estudiantes semilla siguen el patrón `u2025####@utp.edu.pe` (correlativo `20250001`–`20250600`,
 los primeros 300 son de Ingeniería de Sistemas e Informática y los siguientes 300 de Ingeniería de
@@ -291,13 +291,13 @@ npm run dev
 
 ## Puertos y URLs
 
-| Servicio | URL | Descripción |
-|---------|-----|-------------|
-| React (Frontend) | `http://localhost:5173` | Interfaz web principal |
-| Node.js (Backend) | `http://localhost:3001` | API REST |
-| FastAPI (IA) | `http://localhost:8000` | Microservicio de IA y GAs |
-| FastAPI Docs | `http://localhost:8000/docs` | Swagger UI interactivo |
-| MySQL | `localhost:3306` | Base de datos |
+|     Servicio      |             URL              |        Descripción        |
+|-------------------|------------------------------|---------------------------|
+| React (Frontend)  |   `http://localhost:5173`    |   Interfaz web principal  |
+| Node.js (Backend) |   `http://localhost:3001`    |          API REST         |
+|    FastAPI (IA)   |   `http://localhost:8000`    | Microservicio de IA y GAs |
+|    FastAPI Docs   | `http://localhost:8000/docs` |   Swagger UI interactivo  |
+|        MySQL      |      `localhost:3306`        |        Base de datos      |
 
 ---
 
@@ -305,19 +305,19 @@ npm run dev
 
 ### Rol Administrativo
 
-| Módulo | Ruta | Descripción |
-|--------|------|-------------|
-| Dashboard | `/` | KPIs históricos + tabla de matrículas |
-| Análisis de Aforos | `/analisis` | Clustering K-Means K=3 con gráficos |
-| Predicción IA | `/prediccion` | Predicción con Regresión Lineal/Ridge |
-| Secciones | `/secciones` | AG#2 — Optimización de distribución de aulas |
-| Horarios | `/horarios` | AG#3 standalone/pipeline + **Horario Administrativo real** (generar/ver/exportar PDF) |
-| Planificador IA | `/planificador` | Motor de espacios de estados (BFS/DFS/A*) sobre las 288 aulas reales |
+|       Módulo       |       Ruta      |                                     Descripción                                       |
+|--------------------|-----------------|---------------------------------------------------------------------------------------|
+|      Dashboard     |       `/`       |                        KPIs históricos + tabla de matrículas                          |
+| Análisis de Aforos |  `/analisis`    |                         Clustering K-Means K=3 con gráficos                           |
+|    Predicción IA   | `/prediccion`   |                        Predicción con Regresión Lineal/Ridge                          |
+|     Secciones      |  `/secciones`   |                    AG#2 — Optimización de distribución de aulas                       |
+|     Horarios       |   `/horarios`   | AG#3 standalone/pipeline + **Horario Administrativo real** (generar/ver/exportar PDF) |
+|  Planificador IA   | `/planificador` |         Motor de espacios de estados (BFS/DFS/A*) sobre las 288 aulas reales          |
 
 ### Rol Estudiante
 
-| Módulo | Ruta | Descripción |
-|--------|------|-------------|
+|   Módulo   |      Ruta     |                                                            Descripción                                                           |
+|------------|---------------|----------------------------------------------------------------------------------------------------------------------------------|
 | Mi Horario | `/mi-horario` | Ver horario administrativo de su carrera/ciclo, matricularse/desmatricularse, comparación con resaltado de choques, exportar PDF |
 
 El estudiante **no** tiene acceso a Dashboard/Análisis/Predicción/Secciones/Planificador (son
