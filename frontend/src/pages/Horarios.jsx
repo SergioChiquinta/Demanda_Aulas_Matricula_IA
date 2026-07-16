@@ -132,7 +132,7 @@ export default function Horarios() {
         </button>
 
         {result && (
-          <div style={{ display: 'flex', gap: 24, fontSize: 14, color: '#555' }}>
+          <div style={{ display: 'flex', gap: 24, fontSize: 14, color: '#555', flexWrap: 'wrap' }}>
             <span>✅ <strong>{result.n_cursos}</strong> cursos</span>
             <span>🏫 <strong>{result.n_aulas}</strong> aulas</span>
             <span>🕐 <strong>{result.n_turnos}</strong> turnos</span>

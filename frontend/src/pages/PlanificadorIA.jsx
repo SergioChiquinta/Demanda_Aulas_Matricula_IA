@@ -9,47 +9,32 @@ import Spinner from '../components/Spinner';
 import OcupacionBadge from '../components/OcupacionBadge';
 
 // ── Constantes ────────────────────────────────────────────────────
-const ALGORITMOS = [
-  {
-    key: 'bfs',
-    label: 'BFS',
-    icon: '🌊',
-    desc: 'Menor nº pasos',
-    titulo: 'Búsqueda en Anchura',
-    detalle: 'Explora nivel a nivel. Garantiza el camino con menor número de acciones.',
-  },
-  {
-    key: 'dfs',
-    label: 'DFS',
-    icon: '🔍',
-    desc: 'Búsqueda rápida',
-    titulo: 'Búsqueda en Profundidad',
-    detalle: 'Explora el árbol en profundidad. Rápido pero no garantiza optimalidad.',
-  },
-  {
-    key: 'astar',
-    label: 'A*',
-    icon: '⭐',
-    desc: 'Óptimo f=g+h',
-    titulo: 'A* (f = g + h)',
-    detalle: 'Usa heurística admisible. Garantiza el camino de MENOR COSTO TOTAL.',
-  },
-];
+// El planificador usa siempre A*: garantiza el camino de menor costo total
+// con heurística admisible, así que no hace falta que el admin elija entre
+// BFS/DFS/A* — se fija el mejor algoritmo por defecto.
+const ALGO_ASTAR = {
+  key: 'astar',
+  label: 'A*',
+  icon: '⭐',
+  desc: 'Óptimo f=g+h',
+  titulo: 'A* (f = g + h)',
+  detalle: 'Usa heurística admisible. Garantiza el camino de MENOR COSTO TOTAL.',
+};
 
 const ACCION_ICONS = {
-  asignar_aula:    '🏫',
-  abrir_seccion:   '➕',
+  asignar_aula: '🏫',
+  abrir_seccion: '➕',
   asignar_docente: '👨‍🏫',
   cambiar_horario: '🗓️',
-  cerrar_seccion:  '❌',
+  cerrar_seccion: '❌',
 };
 
 const ACCION_DESC = {
-  asignar_aula:    'Aula asignada con alumnos y turno',
-  abrir_seccion:   'Nueva sección creada',
+  asignar_aula: 'Aula asignada con alumnos y turno',
+  abrir_seccion: 'Nueva sección creada',
   asignar_docente: 'Docente asignado a sección',
   cambiar_horario: 'Horario reconfigurado',
-  cerrar_seccion:  'Sección consolidada',
+  cerrar_seccion: 'Sección consolidada',
 };
 
 // ── Helpers del tab de Precisión (definidos a nivel de módulo, fuera del componente) ──
@@ -57,10 +42,10 @@ const scoreColor = (v) =>
   v >= 0.9 ? '#2E7D32' : v >= 0.7 ? '#1565C0' : v >= 0.5 ? '#E65100' : '#8B0000';
 
 function GaugeSVG({ value, label, color }) {
-  const pct  = Math.min(1, Math.max(0, Number(value) || 0));
+  const pct = Math.min(1, Math.max(0, Number(value) || 0));
   const r = 36, cx = 44, cy = 44;
   const circ = 2 * Math.PI * r;
-  const dash  = pct * circ;
+  const dash = pct * circ;
   return (
     <div style={{ textAlign: 'center' }}>
       <svg width={88} height={88}>
@@ -102,13 +87,12 @@ export default function PlanificadorIA() {
   const { derived } = usePrediccion();
 
   // ── Estado local ───────────────────────────────────────────────
-  const [algoritmo, setAlgoritmo]   = useState('astar');
-  const [demanda, setDemanda]       = useState('');
-  const [docentes, setDocentes]     = useState(3);
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState(null);
-  const [resultado, setResultado]   = useState(null);
-  const [tabActiva, setTabActiva]   = useState('planificacion');
+  const [demanda, setDemanda] = useState('');
+  const [docentes, setDocentes] = useState(3);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [resultado, setResultado] = useState(null);
+  const [tabActiva, setTabActiva] = useState('planificacion');
 
   // Usar la predicción del contexto como valor por defecto si existe
   const demandaEfectiva = demanda !== ''
@@ -123,18 +107,18 @@ export default function PlanificadorIA() {
     setTabActiva('planificacion');
     try {
       const payload = {
-        demanda_predicha:    demandaEfectiva,
+        demanda_predicha: demandaEfectiva,
         docentes_disponibles: docentes,
         // aulas y horarios = null → el backend usa los reales de MySQL
       };
-      const { data } = await api.post(`/planner/${algoritmo}`, payload);
+      const { data } = await api.post(`/planner/${ALGO_ASTAR.key}`, payload);
       setResultado(data);
     } catch (err) {
       setError(err.response?.data?.error || err.message);
     } finally {
       setLoading(false);
     }
-  }, [algoritmo, demandaEfectiva, docentes]);
+  }, [demandaEfectiva, docentes]);
 
   const resetear = () => {
     setResultado(null);
@@ -144,15 +128,15 @@ export default function PlanificadorIA() {
   };
 
   // ── Datos derivados para gráficos ──────────────────────────────
-  const algoInfo = ALGORITMOS.find(a => a.key === algoritmo);
+  const algoInfo = ALGO_ASTAR;
   const stats = resultado?.estadisticas;
 
   const radarData = stats ? [
-    { subject: 'Nodos exp.',  value: Math.min(100, (stats.nodos_expandidos / 10) * 10) },
+    { subject: 'Nodos exp.', value: Math.min(100, (stats.nodos_expandidos / 10) * 10) },
     { subject: 'Profundidad', value: Math.min(100, (stats.profundidad / 20) * 100) },
-    { subject: 'Velocidad',   value: Math.max(0, 100 - (stats.tiempo_ms / 2)) },
-    { subject: 'Eficiencia',  value: resultado.encontrado ? 90 : 20 },
-    { subject: 'Costo',       value: Math.max(0, 100 - (resultado.costo * 5)) },
+    { subject: 'Velocidad', value: Math.max(0, 100 - (stats.tiempo_ms / 2)) },
+    { subject: 'Eficiencia', value: resultado.encontrado ? 90 : 20 },
+    { subject: 'Costo', value: Math.max(0, 100 - (resultado.costo * 5)) },
   ] : [];
 
   const maxHDiag = resultado?.heuristica_diagnostico
@@ -165,12 +149,12 @@ export default function PlanificadorIA() {
       <div className="page-header">
         <h2>🧠 Planificador IA — Motor Inteligente</h2>
         <p>
-          IA Clásica basada en Espacios de Estados. Utiliza BFS, DFS o A* para encontrar
-          la asignación óptima de aulas a partir de la predicción del modelo ML.
+          IA Clásica basada en Espacios de Estados. Utiliza A* (f = g + h) con heurística
+          admisible para encontrar la asignación de MENOR COSTO TOTAL a partir de la predicción del modelo ML.
         </p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 24, alignItems: 'start' }}>
+      <div className="split-layout split-layout--340">
 
         {/* ════ PANEL DE CONFIGURACIÓN ════════════════════════════ */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -185,33 +169,6 @@ export default function PlanificadorIA() {
               </span>
             </div>
           )}
-
-          {/* Selector de algoritmo */}
-          <div className="card">
-            <div className="card-header"><h3>Seleccionar Algoritmo</h3></div>
-            <div className="card-body">
-              <div className="algo-selector">
-                {ALGORITMOS.map(algo => (
-                  <button
-                    key={algo.key}
-                    id={`btn-algo-${algo.key}`}
-                    className={`algo-btn${algoritmo === algo.key ? ' selected' : ''}`}
-                    onClick={() => setAlgoritmo(algo.key)}
-                    title={algo.detalle}
-                  >
-                    <span className="algo-icon">{algo.icon}</span>
-                    <span className="algo-label">{algo.label}</span>
-                    <span className="algo-desc">{algo.desc}</span>
-                  </button>
-                ))}
-              </div>
-              {algoInfo && (
-                <div className="alert alert-info" style={{ margin: '12px 0 0', fontSize: 12 }}>
-                  <strong>{algoInfo.titulo}</strong><br />{algoInfo.detalle}
-                </div>
-              )}
-            </div>
-          </div>
 
           {/* Parámetros */}
           <div className="card">
@@ -251,7 +208,7 @@ export default function PlanificadorIA() {
                 🏫 Las aulas y horarios se cargan automáticamente desde la base de datos MySQL.
               </div>
 
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button
                   id="btn-ejecutar-planner"
                   className="btn btn-primary"
@@ -273,7 +230,7 @@ export default function PlanificadorIA() {
               {[
                 { icon: '🗄️', step: 'MySQL', desc: 'Datos históricos' },
                 { icon: '🤖', step: 'ML (Ridge/Lineal)', desc: 'Predicción alumnos' },
-                { icon: '🔽', step: 'demanda_predicha', desc: 'Entrada al planificador' },
+                { icon: '🔽', step: 'demanda_predicción', desc: 'Entrada al planificador' },
                 { icon: '🧠', step: `Motor IA (${algoInfo?.label})`, desc: 'Búsqueda en espacio de estados' },
                 { icon: '📋', step: 'Planificación óptima', desc: 'Aulas + Docentes + Horarios' },
               ].map(({ icon, step, desc }, i) => (
@@ -304,8 +261,8 @@ export default function PlanificadorIA() {
                   Motor Inteligente de Planificación listo
                 </p>
                 <p style={{ fontSize: 13, color: '#888', textAlign: 'center', maxWidth: 400 }}>
-                  Selecciona un algoritmo, configura los parámetros y pulsa <strong>Ejecutar</strong>.
-                  El motor buscará la asignación óptima de aulas en el espacio de estados.
+                  Configura los parámetros y pulsa <strong>Ejecutar</strong>.
+                  El motor buscará la asignación óptima de aulas en el espacio de estados con A*.
                 </p>
               </div>
             </div>
@@ -333,12 +290,12 @@ export default function PlanificadorIA() {
               {/* ── KPIs de métricas de búsqueda ──────────────── */}
               <div className="metrics-grid">
                 {[
-                  { label: 'Tiempo',      value: `${stats?.tiempo_ms}ms` },
+                  { label: 'Tiempo', value: `${stats?.tiempo_ms}ms` },
                   { label: 'Nodos Exp.', value: stats?.nodos_expandidos },
                   { label: 'Nodos Gen.', value: stats?.nodos_generados },
                   { label: 'Profundidad', value: stats?.profundidad },
                   { label: 'Costo Total', value: resultado.costo },
-                  { label: 'Acciones',   value: stats?.longitud_camino },
+                  { label: 'Acciones', value: stats?.longitud_camino },
                 ].map(({ label, value }) => (
                   <div key={label} className="metric-card">
                     <div className="metric-value">{value}</div>
@@ -351,12 +308,12 @@ export default function PlanificadorIA() {
               {resultado.metricas_precision && (
                 <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(130px,1fr))' }}>
                   {[
-                    { label: 'F1-Score',   value: (resultado.metricas_precision.f1_score * 100).toFixed(1) + '%',   color: resultado.metricas_precision.f1_score >= 0.7 ? 'var(--verde-optimo)' : resultado.metricas_precision.f1_score >= 0.5 ? '#E65100' : 'var(--rojo-utp)' },
-                    { label: 'Precisión',  value: (resultado.metricas_precision.precision * 100).toFixed(1) + '%',  color: resultado.metricas_precision.precision >= 0.7 ? 'var(--verde-optimo)' : '#E65100' },
-                    { label: 'Recall',     value: (resultado.metricas_precision.recall * 100).toFixed(1) + '%',     color: resultado.metricas_precision.recall >= 0.7 ? 'var(--verde-optimo)' : '#E65100' },
-                    { label: 'Accuracy',   value: (resultado.metricas_precision.accuracy * 100).toFixed(1) + '%',   color: resultado.metricas_precision.accuracy >= 0.7 ? 'var(--verde-optimo)' : '#E65100' },
-                    { label: 'Cobertura',  value: resultado.metricas_precision.cobertura_alumnos_pct.toFixed(1) + '%', color: resultado.metricas_precision.cobertura_alumnos_pct >= 90 ? 'var(--verde-optimo)' : '#E65100' },
-                    { label: 'Ef. Búsq.', value: resultado.metricas_precision.eficiencia_busqueda + '%',            color: resultado.metricas_precision.eficiencia_busqueda >= 20 ? 'var(--verde-optimo)' : '#E65100' },
+                    { label: 'F1-Score', value: (resultado.metricas_precision.f1_score * 100).toFixed(1) + '%', color: resultado.metricas_precision.f1_score >= 0.7 ? 'var(--verde-optimo)' : resultado.metricas_precision.f1_score >= 0.5 ? '#E65100' : 'var(--rojo-utp)' },
+                    { label: 'Precisión', value: (resultado.metricas_precision.precision * 100).toFixed(1) + '%', color: resultado.metricas_precision.precision >= 0.7 ? 'var(--verde-optimo)' : '#E65100' },
+                    { label: 'Recall', value: (resultado.metricas_precision.recall * 100).toFixed(1) + '%', color: resultado.metricas_precision.recall >= 0.7 ? 'var(--verde-optimo)' : '#E65100' },
+                    { label: 'Accuracy', value: (resultado.metricas_precision.accuracy * 100).toFixed(1) + '%', color: resultado.metricas_precision.accuracy >= 0.7 ? 'var(--verde-optimo)' : '#E65100' },
+                    { label: 'Cobertura', value: resultado.metricas_precision.cobertura_alumnos_pct.toFixed(1) + '%', color: resultado.metricas_precision.cobertura_alumnos_pct >= 90 ? 'var(--verde-optimo)' : '#E65100' },
+                    { label: 'Ef. Búsq.', value: resultado.metricas_precision.eficiencia_busqueda + '%', color: resultado.metricas_precision.eficiencia_busqueda >= 20 ? 'var(--verde-optimo)' : '#E65100' },
                   ].map(({ label, value, color }) => (
                     <div key={label} className="metric-card">
                       <div className="metric-value" style={{ color, fontSize: 22 }}>{value}</div>
@@ -369,14 +326,14 @@ export default function PlanificadorIA() {
               {/* ── Tabs de contenido ─────────────────────────── */}
               <div className="card">
                 <div className="card-header" style={{ paddingBottom: 0 }}>
-                  <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid #eee', paddingBottom: 0 }}>
+                  <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid #eee', paddingBottom: 0, overflowX: 'auto' }}>
                     {[
                       { key: 'planificacion', label: '📋 Planificación' },
-                      { key: 'estados',       label: '🔄 Estados' },
-                      { key: 'acciones',      label: '⚡ Acciones' },
-                      { key: 'precision',     label: '🎯 Precisión' },
-                      { key: 'heuristica',    label: '📐 Heurística' },
-                      { key: 'radar',         label: '📊 Radar' },
+                      { key: 'estados', label: '🔄 Estados' },
+                      { key: 'acciones', label: '⚡ Acciones' },
+                      { key: 'precision', label: '🎯 Precisión' },
+                      { key: 'heuristica', label: '📐 Heurística' },
+                      { key: 'radar', label: '📊 Radar' },
                     ].map(tab => (
                       <button
                         key={tab.key}
@@ -393,6 +350,8 @@ export default function PlanificadorIA() {
                           borderBottom: tabActiva === tab.key ? '2px solid var(--rojo-utp)' : '2px solid transparent',
                           marginBottom: -1,
                           transition: 'all .15s',
+                          flexShrink: 0,
+                          whiteSpace: 'nowrap',
                         }}
                       >
                         {tab.label}
@@ -459,15 +418,15 @@ export default function PlanificadorIA() {
                           <h4>Estado Inicial</h4>
                         </div>
                         {resultado.estado_inicial && Object.entries({
-                          'Demanda total':      resultado.estado_inicial.demanda_total,
-                          'Alumnos restantes':  resultado.estado_inicial.alumnos_restantes,
-                          'Aulas disponibles':  resultado.estado_inicial.aulas_disponibles_count,
-                          'Docentes':           resultado.estado_inicial.docentes_disponibles,
-                          'Horarios':           resultado.estado_inicial.horarios_disponibles?.length,
+                          'Demanda total': resultado.estado_inicial.demanda_total,
+                          'Alumnos restantes': resultado.estado_inicial.alumnos_restantes,
+                          'Aulas disponibles': resultado.estado_inicial.aulas_disponibles_count,
+                          'Docentes': resultado.estado_inicial.docentes_disponibles,
+                          'Horarios': resultado.estado_inicial.horarios_disponibles?.length,
                           'Secciones abiertas': resultado.estado_inicial.secciones_abiertas,
-                          'g(n)':               resultado.estado_inicial.costo_acumulado,
-                          'h(n)':               resultado.estado_inicial.heuristica,
-                          'f(n)':               resultado.estado_inicial.f,
+                          'g(n)': resultado.estado_inicial.costo_acumulado,
+                          'h(n)': resultado.estado_inicial.heuristica,
+                          'f(n)': resultado.estado_inicial.f,
                         }).map(([k, v]) => (
                           <div key={k} className="state-row">
                             <span className="s-label">{k}</span>
@@ -483,16 +442,16 @@ export default function PlanificadorIA() {
                           <h4>Estado Final {resultado.encontrado ? '✅' : '⚠️'}</h4>
                         </div>
                         {resultado.estado_final ? Object.entries({
-                          'Demanda total':      resultado.estado_final.demanda_total,
-                          'Alumnos restantes':  resultado.estado_final.alumnos_restantes,
-                          'Alumnos asignados':  resultado.estado_final.alumnos_asignados,
+                          'Demanda total': resultado.estado_final.demanda_total,
+                          'Alumnos restantes': resultado.estado_final.alumnos_restantes,
+                          'Alumnos asignados': resultado.estado_final.alumnos_asignados,
                           'Secciones abiertas': resultado.estado_final.secciones_abiertas,
-                          'Docentes rest.':     resultado.estado_final.docentes_disponibles,
-                          'Aulas asignadas':    resultado.estado_final.aulas_asignadas?.length,
-                          'Cupos totales':      resultado.estado_final.cupos_totales,
-                          'g(n)':               resultado.estado_final.costo_acumulado,
-                          'h(n)':               resultado.estado_final.heuristica,
-                          'f(n)':               resultado.estado_final.f,
+                          'Docentes rest.': resultado.estado_final.docentes_disponibles,
+                          'Aulas asignadas': resultado.estado_final.aulas_asignadas?.length,
+                          'Cupos totales': resultado.estado_final.cupos_totales,
+                          'g(n)': resultado.estado_final.costo_acumulado,
+                          'h(n)': resultado.estado_final.heuristica,
+                          'f(n)': resultado.estado_final.f,
                         }).map(([k, v]) => (
                           <div key={k} className="state-row">
                             <span className="s-label">{k}</span>
@@ -557,12 +516,12 @@ export default function PlanificadorIA() {
                       </div>
                       <div className="heuristica-bars">
                         {[
-                          { key: 'desperdicio_cupos',      label: 'Cupos desperdiciados' },
+                          { key: 'desperdicio_cupos', label: 'Cupos desperdiciados' },
                           { key: 'sobreocupacion_alumnos', label: 'Sobreocupación' },
-                          { key: 'deficit_docentes',       label: 'Déficit docentes' },
-                          { key: 'conflictos_horario',     label: 'Conflictos horario' },
-                          { key: 'alumnos_restantes',      label: 'Alumnos sin asignar' },
-                          { key: 'secciones_abiertas',     label: 'Secciones abiertas' },
+                          { key: 'deficit_docentes', label: 'Déficit docentes' },
+                          { key: 'conflictos_horario', label: 'Conflictos horario' },
+                          { key: 'alumnos_restantes', label: 'Alumnos sin asignar' },
+                          { key: 'secciones_abiertas', label: 'Secciones abiertas' },
                         ].map(({ key, label }) => {
                           const val = resultado.heuristica_diagnostico[key] ?? 0;
                           const pct = Math.min(100, (val / maxHDiag) * 100);
@@ -584,98 +543,98 @@ export default function PlanificadorIA() {
                     </div>
                   )}
 
-                   {/* TAB: Métricas de Precisión */}
-                   {tabActiva === 'precision' && (
-                     resultado.metricas_precision ? (
-                       <div>
-                         {/* Caja de definiciones */}
-                         <div style={{ background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: 12.5, color: '#1E3A8A', lineHeight: 1.7 }}>
-                           <strong>📌 Definiciones adaptadas al dominio de planificación</strong><br />
-                           <strong>TP (Verdadero Positivo):</strong> alumno asignado en aula con ocupación óptima (65–90%).<br />
-                           <strong>FP (Falso Positivo):</strong> alumno asignado en aula fuera del rango óptimo.<br />
-                           <strong>FN (Falso Negativo):</strong> alumno sin asignar (demanda no cubierta).<br />
-                           <strong>F1-Score</strong> = 2 × Precisión × Recall / (Precisión + Recall)
-                         </div>
+                  {/* TAB: Métricas de Precisión */}
+                  {tabActiva === 'precision' && (
+                    resultado.metricas_precision ? (
+                      <div>
+                        {/* Caja de definiciones */}
+                        <div style={{ background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: 12.5, color: '#1E3A8A', lineHeight: 1.7 }}>
+                          <strong>📌 Definiciones adaptadas al dominio de planificación</strong><br />
+                          <strong>TP (Verdadero Positivo):</strong> alumno asignado en aula con ocupación óptima (65–90%).<br />
+                          <strong>FP (Falso Positivo):</strong> alumno asignado en aula fuera del rango óptimo.<br />
+                          <strong>FN (Falso Negativo):</strong> alumno sin asignar (demanda no cubierta).<br />
+                          <strong>F1-Score</strong> = 2 × Precisión × Recall / (Precisión + Recall)
+                        </div>
 
-                         {/* Gauges */}
-                         <div style={{ display: 'flex', gap: 20, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 24, padding: '8px 0' }}>
-                           <GaugeSVG value={resultado.metricas_precision.f1_score}  label="F1-Score"  color={scoreColor(resultado.metricas_precision.f1_score)} />
-                           <GaugeSVG value={resultado.metricas_precision.precision} label="Precisión" color={scoreColor(resultado.metricas_precision.precision)} />
-                           <GaugeSVG value={resultado.metricas_precision.recall}    label="Recall"    color={scoreColor(resultado.metricas_precision.recall)} />
-                           <GaugeSVG value={resultado.metricas_precision.accuracy}  label="Accuracy"  color={scoreColor(resultado.metricas_precision.accuracy)} />
-                         </div>
+                        {/* Gauges */}
+                        <div style={{ display: 'flex', gap: 20, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 24, padding: '8px 0' }}>
+                          <GaugeSVG value={resultado.metricas_precision.f1_score} label="F1-Score" color={scoreColor(resultado.metricas_precision.f1_score)} />
+                          <GaugeSVG value={resultado.metricas_precision.precision} label="Precisión" color={scoreColor(resultado.metricas_precision.precision)} />
+                          <GaugeSVG value={resultado.metricas_precision.recall} label="Recall" color={scoreColor(resultado.metricas_precision.recall)} />
+                          <GaugeSVG value={resultado.metricas_precision.accuracy} label="Accuracy" color={scoreColor(resultado.metricas_precision.accuracy)} />
+                        </div>
 
-                         {/* Barras de interpretación */}
-                         <InterpRow
-                           icon="🎯" label="F1-Score — Balance general"
-                           value={(resultado.metricas_precision.f1_score * 100).toFixed(1) + '%'}
-                           pct={resultado.metricas_precision.f1_score * 100}
-                           interp={resultado.metricas_precision.interpretaciones?.f1_score}
-                           color={scoreColor(resultado.metricas_precision.f1_score)}
-                         />
-                         <InterpRow
-                           icon="🏆" label="Precisión — Asignaciones en rango óptimo"
-                           value={(resultado.metricas_precision.precision * 100).toFixed(1) + '%'}
-                           pct={resultado.metricas_precision.precision * 100}
-                           interp={resultado.metricas_precision.interpretaciones?.precision}
-                           color={scoreColor(resultado.metricas_precision.precision)}
-                         />
-                         <InterpRow
-                           icon="📡" label="Recall — Cobertura en condición óptima"
-                           value={(resultado.metricas_precision.recall * 100).toFixed(1) + '%'}
-                           pct={resultado.metricas_precision.recall * 100}
-                           interp={resultado.metricas_precision.interpretaciones?.recall}
-                           color={scoreColor(resultado.metricas_precision.recall)}
-                         />
-                         <InterpRow
-                           icon="🎓" label="Cobertura total de alumnos"
-                           value={resultado.metricas_precision.cobertura_alumnos_pct.toFixed(1) + '%'}
-                           pct={resultado.metricas_precision.cobertura_alumnos_pct}
-                           interp={resultado.metricas_precision.interpretaciones?.cobertura}
-                           color={resultado.metricas_precision.cobertura_alumnos_pct >= 99 ? '#2E7D32' : resultado.metricas_precision.cobertura_alumnos_pct >= 90 ? '#1565C0' : '#E65100'}
-                         />
-                         <InterpRow
-                           icon="⚡" label="Eficiencia del algoritmo de búsqueda"
-                           value={resultado.metricas_precision.eficiencia_busqueda + '%'}
-                           pct={Math.min(100, resultado.metricas_precision.eficiencia_busqueda * 2)}
-                           interp={resultado.metricas_precision.interpretaciones?.eficiencia_busqueda}
-                           color={resultado.metricas_precision.eficiencia_busqueda >= 20 ? '#2E7D32' : '#E65100'}
-                         />
+                        {/* Barras de interpretación */}
+                        <InterpRow
+                          icon="🎯" label="F1-Score — Balance general"
+                          value={(resultado.metricas_precision.f1_score * 100).toFixed(1) + '%'}
+                          pct={resultado.metricas_precision.f1_score * 100}
+                          interp={resultado.metricas_precision.interpretaciones?.f1_score}
+                          color={scoreColor(resultado.metricas_precision.f1_score)}
+                        />
+                        <InterpRow
+                          icon="🏆" label="Precisión — Asignaciones en rango óptimo"
+                          value={(resultado.metricas_precision.precision * 100).toFixed(1) + '%'}
+                          pct={resultado.metricas_precision.precision * 100}
+                          interp={resultado.metricas_precision.interpretaciones?.precision}
+                          color={scoreColor(resultado.metricas_precision.precision)}
+                        />
+                        <InterpRow
+                          icon="📡" label="Recall — Cobertura en condición óptima"
+                          value={(resultado.metricas_precision.recall * 100).toFixed(1) + '%'}
+                          pct={resultado.metricas_precision.recall * 100}
+                          interp={resultado.metricas_precision.interpretaciones?.recall}
+                          color={scoreColor(resultado.metricas_precision.recall)}
+                        />
+                        <InterpRow
+                          icon="🎓" label="Cobertura total de alumnos"
+                          value={resultado.metricas_precision.cobertura_alumnos_pct.toFixed(1) + '%'}
+                          pct={resultado.metricas_precision.cobertura_alumnos_pct}
+                          interp={resultado.metricas_precision.interpretaciones?.cobertura}
+                          color={resultado.metricas_precision.cobertura_alumnos_pct >= 99 ? '#2E7D32' : resultado.metricas_precision.cobertura_alumnos_pct >= 90 ? '#1565C0' : '#E65100'}
+                        />
+                        <InterpRow
+                          icon="⚡" label="Eficiencia del algoritmo de búsqueda"
+                          value={resultado.metricas_precision.eficiencia_busqueda + '%'}
+                          pct={Math.min(100, resultado.metricas_precision.eficiencia_busqueda * 2)}
+                          interp={resultado.metricas_precision.interpretaciones?.eficiencia_busqueda}
+                          color={resultado.metricas_precision.eficiencia_busqueda >= 20 ? '#2E7D32' : '#E65100'}
+                        />
 
-                         {/* Matriz de confusión */}
-                         <div style={{ marginTop: 20 }}>
-                           <div style={{ fontWeight: 700, fontSize: 13, color: '#333', marginBottom: 10 }}>Matriz de Confusión (adaptada al dominio)</div>
-                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                             {[
-                               { label: '✅ Verdaderos Positivos (TP)', value: resultado.metricas_precision.verdaderos_positivos, desc: 'Alumnos en aulas con ocupación óptima', bg: '#E8F5E9', color: '#2E7D32' },
-                               { label: '⚠️ Falsos Positivos (FP)',    value: resultado.metricas_precision.falsos_positivos,    desc: 'Alumnos en aulas fuera del rango óptimo', bg: '#FFF8E1', color: '#E65100' },
-                               { label: '❌ Falsos Negativos (FN)',    value: resultado.metricas_precision.falsos_negativos,    desc: 'Alumnos que no pudieron ser asignados', bg: '#FFEBEE', color: '#8B0000' },
-                               { label: '📊 Total analizado',          value: resultado.metricas_precision.alumnos_cubiertos + resultado.metricas_precision.alumnos_sin_cubrir, desc: 'Demanda total de alumnos a planificar', bg: '#F3F4F6', color: '#555' },
-                             ].map(({ label, value, desc, bg, color }) => (
-                               <div key={label} style={{ background: bg, borderRadius: 8, padding: '12px 14px' }}>
-                                 <div style={{ fontSize: 10, fontWeight: 700, color: '#777', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
-                                 <div style={{ fontSize: 26, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
-                                 <div style={{ fontSize: 11, color: '#888', marginTop: 5 }}>{desc}</div>
-                               </div>
-                             ))}
-                           </div>
-                         </div>
+                        {/* Matriz de confusión */}
+                        <div style={{ marginTop: 20 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: '#333', marginBottom: 10 }}>Matriz de Confusión (adaptada al dominio)</div>
+                          <div className="grid-2col" style={{ gap: 10 }}>
+                            {[
+                              { label: '✅ Verdaderos Positivos (TP)', value: resultado.metricas_precision.verdaderos_positivos, desc: 'Alumnos en aulas con ocupación óptima', bg: '#E8F5E9', color: '#2E7D32' },
+                              { label: '⚠️ Falsos Positivos (FP)', value: resultado.metricas_precision.falsos_positivos, desc: 'Alumnos en aulas fuera del rango óptimo', bg: '#FFF8E1', color: '#E65100' },
+                              { label: '❌ Falsos Negativos (FN)', value: resultado.metricas_precision.falsos_negativos, desc: 'Alumnos que no pudieron ser asignados', bg: '#FFEBEE', color: '#8B0000' },
+                              { label: '📊 Total analizado', value: resultado.metricas_precision.alumnos_cubiertos + resultado.metricas_precision.alumnos_sin_cubrir, desc: 'Demanda total de alumnos a planificar', bg: '#F3F4F6', color: '#555' },
+                            ].map(({ label, value, desc, bg, color }) => (
+                              <div key={label} style={{ background: bg, borderRadius: 8, padding: '12px 14px' }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: '#777', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
+                                <div style={{ fontSize: 26, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
+                                <div style={{ fontSize: 11, color: '#888', marginTop: 5 }}>{desc}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
 
-                         {/* Pie de resumen */}
-                         <div style={{ marginTop: 14, padding: '10px 16px', background: '#F9FAFB', borderRadius: 8, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, fontSize: 12.5, color: '#555' }}>
-                           <span>🏫 Secciones óptimas: <strong>{resultado.metricas_precision.secciones_optimas}</strong> / {resultado.metricas_precision.secciones_total}</span>
-                           <span>👥 Alumnos bien ubicados: <strong>{resultado.metricas_precision.alumnos_bien_ubicados}</strong> / {resultado.metricas_precision.alumnos_cubiertos}</span>
-                           <span>📉 Sin cubrir: <strong style={{ color: resultado.metricas_precision.alumnos_sin_cubrir > 0 ? '#8B0000' : '#2E7D32' }}>{resultado.metricas_precision.alumnos_sin_cubrir}</strong></span>
-                           <span>📐 Ocupación prom.: <strong>{(resultado.metricas_precision.ocupacion_promedio * 100).toFixed(1)}%</strong></span>
-                         </div>
-                       </div>
-                     ) : (
-                       <div style={{ textAlign: 'center', padding: '40px 20px', color: '#888' }}>
-                         <div style={{ fontSize: 36, marginBottom: 12 }}>🔄</div>
-                         <p style={{ fontSize: 13 }}>Ejecuta la planificación para ver las métricas de precisión.</p>
-                       </div>
-                     )
-                   )}
+                        {/* Pie de resumen */}
+                        <div style={{ marginTop: 14, padding: '10px 16px', background: '#F9FAFB', borderRadius: 8, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, fontSize: 12.5, color: '#555' }}>
+                          <span>🏫 Secciones óptimas: <strong>{resultado.metricas_precision.secciones_optimas}</strong> / {resultado.metricas_precision.secciones_total}</span>
+                          <span>👥 Alumnos bien ubicados: <strong>{resultado.metricas_precision.alumnos_bien_ubicados}</strong> / {resultado.metricas_precision.alumnos_cubiertos}</span>
+                          <span>📉 Sin cubrir: <strong style={{ color: resultado.metricas_precision.alumnos_sin_cubrir > 0 ? '#8B0000' : '#2E7D32' }}>{resultado.metricas_precision.alumnos_sin_cubrir}</strong></span>
+                          <span>📐 Ocupación prom.: <strong>{(resultado.metricas_precision.ocupacion_promedio * 100).toFixed(1)}%</strong></span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ textAlign: 'center', padding: '40px 20px', color: '#888' }}>
+                        <div style={{ fontSize: 36, marginBottom: 12 }}>🔄</div>
+                        <p style={{ fontSize: 13 }}>Ejecuta la planificación para ver las métricas de precisión.</p>
+                      </div>
+                    )
+                  )}
 
 
                   {tabActiva === 'radar' && stats && (
@@ -694,7 +653,7 @@ export default function PlanificadorIA() {
                           <Tooltip />
                         </RadarChart>
                       </ResponsiveContainer>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 16 }}>
+                      <div className="grid-3col" style={{ gap: 12, marginTop: 16 }}>
                         {[
                           { label: 'Algoritmo', value: resultado.algoritmo_usado },
                           { label: 'Tiempo (ms)', value: stats.tiempo_ms },

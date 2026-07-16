@@ -57,4 +57,34 @@ const getVariables = async (req, res) => {
   res.json({ variables: vars });
 };
 
-module.exports = { getKpis, getHistorico, getVariables };
+/**
+ * GET /api/datos/estado-operativo
+ * Estado real del sistema operativo (catálogo real: cursos, aulas, secciones,
+ * estudiantes) en el periodo activo — distinto del dataset histórico sintético.
+ */
+const getEstadoOperativo = async (req, res) => {
+  try {
+    const [periodoRows] = await pool.query(
+      'SELECT id_periodo, codigo_periodo FROM periodos WHERE activo = 1 LIMIT 1'
+    );
+    const periodo = periodoRows[0];
+    if (!periodo) return res.json({ periodo_activo: null });
+
+    const [statRows] = await pool.query(
+      `SELECT
+        (SELECT COUNT(*) FROM cursos) AS cursos_totales,
+        (SELECT COUNT(DISTINCT curso_id) FROM secciones WHERE periodo_id = ?) AS cursos_con_seccion,
+        (SELECT COUNT(*) FROM aulas) AS aulas_totales,
+        (SELECT COUNT(DISTINCT aula_id) FROM secciones WHERE periodo_id = ?) AS aulas_usadas,
+        (SELECT COUNT(*) FROM secciones WHERE periodo_id = ?) AS secciones_totales,
+        (SELECT COUNT(DISTINCT estudiante_id) FROM matriculas WHERE periodo_id = ?) AS estudiantes_matriculados`,
+      [periodo.id_periodo, periodo.id_periodo, periodo.id_periodo, periodo.id_periodo]
+    );
+
+    res.json({ periodo_activo: periodo, ...statRows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { getKpis, getHistorico, getVariables, getEstadoOperativo };
