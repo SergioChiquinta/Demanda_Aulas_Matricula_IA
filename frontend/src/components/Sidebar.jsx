@@ -1,7 +1,8 @@
 // src/components/Sidebar.jsx
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
-const NAV = [
+const NAV_ADMIN = [
   {
     section: 'Principal',
     items: [
@@ -20,8 +21,25 @@ const NAV = [
   },
 ];
 
+const NAV_ESTUDIANTE = [
+  {
+    section: 'Principal',
+    items: [
+      { to: '/mi-horario', icon: '🗓️', label: 'Mi Horario' },
+    ],
+  },
+];
 
 export default function Sidebar() {
+  const { usuario, logout } = useAuth();
+  const navigate = useNavigate();
+  const nav = usuario?.rol === 'estudiante' ? NAV_ESTUDIANTE : NAV_ADMIN;
+
+  const salir = () => {
+    logout();
+    navigate('/login', { replace: true });
+  };
+
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -29,8 +47,16 @@ export default function Sidebar() {
         <span>Sistema Predictivo UTP</span>
       </div>
 
+      {usuario && (
+        <div className="sidebar-user">
+          <div className="user-name">{usuario.nombre}</div>
+          <span className="user-rol">{usuario.rol}</span>
+          <button className="btn-logout" onClick={salir}>Cerrar sesión</button>
+        </div>
+      )}
+
       <nav className="sidebar-nav">
-        {NAV.map(({ section, items }) => (
+        {nav.map(({ section, items }) => (
           <div key={section}>
             <div className="nav-section-label">{section}</div>
             {items.map(({ to, icon, label }) => (

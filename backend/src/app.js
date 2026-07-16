@@ -9,13 +9,16 @@ const prediccionRoutes= require('./routes/prediccion.routes');
 const gaRoutes        = require('./routes/ga.routes');
 // Motor Inteligente de Planificación (nuevo módulo IA Clásica)
 const plannerRoutes   = require('./routes/planner.routes');
+const authRoutes      = require('./routes/auth.routes');
+const horariosRoutes  = require('./routes/horarios.routes');
+const { verificarToken, requiereRol } = require('./middleware/auth.middleware');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
 // ── Middleware ────────────────────────────────────────────
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000', 'http://localhost:3001', 'http://localhost:8000', 'http://127.0.0.1:8000'],
+  origin: ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5174', 'http://127.0.0.1:5174', 'http://localhost:3000', 'http://localhost:3001', 'http://localhost:8000', 'http://127.0.0.1:8000'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Cache-Control', 'Range', 'X-Socket-Id'],
@@ -24,11 +27,16 @@ app.use(cors({
 app.use(express.json());
 
 // ── Rutas ─────────────────────────────────────────────────
-app.use('/api/datos',      datosRoutes);
-app.use('/api/analisis',   analisisRoutes);
-app.use('/api/prediccion', prediccionRoutes);
-app.use('/api/ga',         gaRoutes);
-app.use('/api/planner',    plannerRoutes);   // Motor Inteligente de Planificación
+app.use('/api/auth',       authRoutes);
+app.use('/api/horarios',   horariosRoutes);
+
+// Módulos administrativos de IA: solo Admin (el Estudiante no accede a
+// predicción/GAs/planificador, solo al horario administrativo en lectura).
+app.use('/api/datos',      verificarToken, requiereRol('admin'), datosRoutes);
+app.use('/api/analisis',   verificarToken, requiereRol('admin'), analisisRoutes);
+app.use('/api/prediccion', verificarToken, requiereRol('admin'), prediccionRoutes);
+app.use('/api/ga',         verificarToken, requiereRol('admin'), gaRoutes);
+app.use('/api/planner',    verificarToken, requiereRol('admin'), plannerRoutes);   // Motor Inteligente de Planificación
 
 // Health check
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', port: PORT }));

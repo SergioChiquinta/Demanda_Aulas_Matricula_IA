@@ -17,10 +17,15 @@ def _clasificar_ocupacion(ratio: float) -> str:
 
 
 def ga_horarios(df: pd.DataFrame, pop_size: int = 40,
-                n_gen: int = 60, mutation_rate: float = 0.05) -> dict:
+                n_gen: int = 60, mutation_rate: float = 0.05,
+                top_n: int | None = None) -> dict:
     """
-    GA #3 — Asigna top-30 cursos más demandados a (aula, turno)
-    minimizando conflictos de aula, conflictos de docente y hacinamiento.
+    GA #3 — Asigna cursos a (aula, turno) minimizando conflictos de aula,
+    conflictos de docente y hacinamiento.
+
+    `top_n` es opcional (antes estaba fijo en 30): si se pasa, limita el
+    análisis a los `top_n` cursos de mayor demanda; si se omite, opera
+    sobre todos los cursos del DataFrame recibido.
     """
     resumen = (
         df.groupby("nombre_curso", as_index=False)
@@ -30,9 +35,10 @@ def ga_horarios(df: pd.DataFrame, pop_size: int = 40,
             docente_id=("docente_id", "first"),
         )
         .sort_values("demanda", ascending=False)
-        .head(30)
-        .reset_index(drop=True)
     )
+    if top_n:
+        resumen = resumen.head(top_n)
+    resumen = resumen.reset_index(drop=True)
     resumen["demanda"] = resumen["demanda"].round().astype(int)
 
     aulas = (
@@ -129,7 +135,7 @@ def ga_horarios(df: pd.DataFrame, pop_size: int = 40,
         "n_cursos":     n_c,
         "n_aulas":      n_a,
         "n_turnos":     n_t,
-        "modo":         "top30",
+        "modo":         f"top{top_n}" if top_n else "todos_los_cursos",
     }
 
 
