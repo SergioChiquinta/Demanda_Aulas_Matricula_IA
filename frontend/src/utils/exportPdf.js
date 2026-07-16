@@ -10,7 +10,18 @@ import html2canvas from 'html2canvas';
 export async function exportarHorarioPDF(elemento, { titulo, subtitulo, nombreArchivo }) {
   if (!elemento) return;
 
-  const canvas = await html2canvas(elemento, { scale: 2, backgroundColor: '#ffffff' });
+  const canvas = await html2canvas(elemento, {
+    scale: 2,
+    backgroundColor: '#ffffff',
+    // En el PDF no se necesita el borde que resalta "mis" secciones en pantalla:
+    // ahí ya no hay grilla completa con la que comparar, solo deben figurar los cursos.
+    onclone: (clonedDoc) => {
+      clonedDoc.querySelectorAll('.horario-chip.mia').forEach((el) => {
+        el.style.border = '1px solid rgba(0,0,0,.06)';
+        el.style.boxShadow = 'none';
+      });
+    },
+  });
   const imgData = canvas.toDataURL('image/png');
 
   const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });

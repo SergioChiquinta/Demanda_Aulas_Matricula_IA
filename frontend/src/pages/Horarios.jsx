@@ -10,38 +10,32 @@ import { exportarHorarioPDF } from '../utils/exportPdf';
 
 export default function Horarios() {
   const { state: predState, derived } = usePrediccion();
-  const { hasValidResult, demandaPlan, ocupacionPromedio, aulasRecomendadas, ga2Result, hasGa2Result } = derived;
+  const { hasValidResult, demandaPlan, ocupacionPromedio, aulasRecomendadas } = derived;
 
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const ejecutandoRef = useRef(false);
-  const lastParamsRef = useRef(null);
+  const yaEjecutadoRef = useRef(false);
 
   const ejecutar = () => {
     if (ejecutandoRef.current) return;
     ejecutandoRef.current = true;
     setError(null);
     setLoading(true);
-    const body = hasGa2Result
-      ? { secciones: ga2Result.secciones, curso_nombre: `Curso simulado (${predState.form.escenario})` }
-      : {};
-    api.post('/ga/horarios', body)
-      .then(r => {
-        setResult(r.data);
-        lastParamsRef.current = hasGa2Result ? JSON.stringify(ga2Result.secciones) : 'top30';
-      })
+    api.post('/ga/horarios', {})
+      .then(r => setResult(r.data))
       .catch(e => setError(e.response?.data?.error || e.message))
       .finally(() => { setLoading(false); ejecutandoRef.current = false; });
   };
 
-  // Auto-ejecutar al montar y cada vez que cambie el resultado de Secciones (pipeline)
+  // Auto-ejecutar una sola vez al montar
   useEffect(() => {
-    const paramsKey = hasGa2Result ? JSON.stringify(ga2Result.secciones) : 'top30';
-    if (lastParamsRef.current === paramsKey) return;
+    if (yaEjecutadoRef.current) return;
+    yaEjecutadoRef.current = true;
     ejecutar();
-  }, [hasGa2Result, ga2Result]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // =======================================================
   // Horario administrativo real (persistido en `secciones`,
@@ -103,29 +97,17 @@ export default function Horarios() {
     <div>
       <div className="page-header">
         <h2>Optimizador de Horarios</h2>
-        <p>
-          {hasGa2Result
-            ? 'Asigna aula y turno reales exactamente a las secciones decididas en Secciones, minimizando conflictos y hacinamiento.'
-            : 'Asigna automáticamente los top-30 cursos más demandados a aulas y turnos, minimizando conflictos de aula, conflictos de docente y hacinamiento.'}
-        </p>
+        <p>Asigna automáticamente los top-30 cursos más demandados a aulas y turnos, minimizando conflictos de aula, conflictos de docente y hacinamiento.</p>
       </div>
 
       {/* Banner contextual SSOT */}
-      {hasGa2Result ? (
-        <div className="alert alert-success" style={{ marginBottom: 20 }}>
-          🔗 <strong>Modo pipeline</strong> — usando las <strong>{ga2Result.n_secciones}</strong> secciones
-          calculadas en Secciones (demanda: <strong>{demandaPlan}</strong>,
-          escenario: <strong>{predState.result.escenario}</strong>).
-        </div>
-      ) : hasValidResult ? (
+      {hasValidResult ? (
         <div className="alert alert-info" style={{ marginBottom: 20 }}>
           📊 Predicción activa —
           Demanda: <strong>{demandaPlan}</strong> |
           Aulas recomendadas: <strong>{aulasRecomendadas}</strong> |
           Ocupación: <strong>{(ocupacionPromedio * 100).toFixed(1)}%</strong> |
           Escenario: <strong>{predState.result.escenario}</strong>
-          {' — '}
-          <Link to="/secciones" style={{ fontWeight: 600 }}>Ejecuta Secciones</Link> para encadenar el resultado aquí.
         </div>
       ) : (
         <div className="alert alert-warning" style={{ marginBottom: 20 }}>
@@ -151,7 +133,7 @@ export default function Horarios() {
 
         {result && (
           <div style={{ display: 'flex', gap: 24, fontSize: 14, color: '#555' }}>
-            <span>✅ <strong>{result.n_cursos}</strong> {result.modo === 'pipeline' ? 'secciones' : 'cursos'}</span>
+            <span>✅ <strong>{result.n_cursos}</strong> cursos</span>
             <span>🏫 <strong>{result.n_aulas}</strong> aulas</span>
             <span>🕐 <strong>{result.n_turnos}</strong> turnos</span>
             <span style={{ color: result.conflictos === 0 ? '#2E7D32' : '#E65100' }}>
@@ -181,10 +163,7 @@ export default function Horarios() {
 
           <div className="card" style={{ marginBottom: 32 }}>
             <div className="card-header" style={{ padding: '10px 10px 10px 10px' }}>
-              <h3>
-                Asignación Óptima — {result.asignaciones.length}{' '}
-                {result.modo === 'pipeline' ? 'Secciones (Secciones → Horarios)' : 'Cursos'}
-              </h3>
+              <h3>Asignación Óptima — {result.asignaciones.length} Cursos</h3>
             </div>
             <div className="card-body" style={{ padding: 0 }}>
               <div className="table-wrap">

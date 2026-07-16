@@ -8,15 +8,15 @@ const NAV_ADMIN = [
     items: [
       { to: '/',           icon: '📊', label: 'Dashboard Resumen' },
       { to: '/analisis',   icon: '📈', label: 'Análisis de Aforos' },
-      { to: '/prediccion', icon: '🤖', label: 'Predicción IA' },
-      { to: '/secciones',  icon: '🏫', label: 'Secciones' },
-      { to: '/horarios',   icon: '🗓️', label: 'Horarios' },
     ],
   },
   {
-    section: 'IA Clásica',
+    // Flujo secuencial: Predicción IA -> Planificador IA -> (visto bueno) -> Horarios
+    section: 'Flujo de Planificación',
     items: [
-      { to: '/planificador', icon: '🧠', label: 'Planificador IA' },
+      { to: '/prediccion',   icon: '🤖', label: '1. Predicción IA' },
+      { to: '/planificador', icon: '🧠', label: '2. Planificador IA' },
+      { to: '/horarios',     icon: '🗓️', label: '3. Horarios' },
     ],
   },
 ];

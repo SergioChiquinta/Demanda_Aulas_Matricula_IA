@@ -8,7 +8,6 @@ import Login from './pages/Login';
 import Dashboard    from './pages/Dashboard';
 import Analisis     from './pages/Analisis';
 import PrediccionIA from './pages/PrediccionIA';
-import Secciones    from './pages/Secciones';
 import Horarios     from './pages/Horarios';
 import MiHorario    from './pages/MiHorario';
 // Motor Inteligente de Planificación (nuevo módulo IA Clásica)
@@ -23,9 +22,8 @@ function AppShell() {
           <Route path="/" element={<ProtectedRoute roles={['admin']}><Dashboard /></ProtectedRoute>} />
           <Route path="/analisis" element={<ProtectedRoute roles={['admin']}><Analisis /></ProtectedRoute>} />
           <Route path="/prediccion" element={<ProtectedRoute roles={['admin']}><PrediccionIA /></ProtectedRoute>} />
-          <Route path="/secciones" element={<ProtectedRoute roles={['admin']}><Secciones /></ProtectedRoute>} />
-          <Route path="/horarios" element={<ProtectedRoute roles={['admin']}><Horarios /></ProtectedRoute>} />
           <Route path="/planificador" element={<ProtectedRoute roles={['admin']}><PlanificadorIA /></ProtectedRoute>} />
+          <Route path="/horarios" element={<ProtectedRoute roles={['admin']}><Horarios /></ProtectedRoute>} />
           <Route path="/mi-horario" element={<ProtectedRoute roles={['estudiante']}><MiHorario /></ProtectedRoute>} />
         </Routes>
       </main>

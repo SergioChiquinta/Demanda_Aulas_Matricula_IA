@@ -139,12 +139,30 @@ const matricularEstudiante = async (req, res) => {
     const { seccion_id } = req.body;
     if (!seccion_id) return res.status(400).json({ error: 'seccion_id es requerido' });
 
-    const [secRows] = await pool.query('SELECT periodo_id FROM secciones WHERE id_seccion = ?', [seccion_id]);
-    if (!secRows[0]) return res.status(404).json({ error: 'Sección no encontrada' });
+    const [secRows] = await pool.query(
+      'SELECT periodo_id, curso_id, bloque_id FROM secciones WHERE id_seccion = ?',
+      [seccion_id]
+    );
+    const seccion = secRows[0];
+    if (!seccion) return res.status(404).json({ error: 'Sección no encontrada' });
+
+    const [existentes] = await pool.query(
+      `SELECT s.curso_id, s.bloque_id
+       FROM matriculas m JOIN secciones s ON s.id_seccion = m.seccion_id
+       WHERE m.estudiante_id = ? AND m.periodo_id = ?`,
+      [idEstudiante, seccion.periodo_id]
+    );
+
+    if (existentes.some((e) => e.curso_id === seccion.curso_id)) {
+      return res.status(409).json({ error: 'Ya estás matriculado en este curso (en otra sección)' });
+    }
+    if (existentes.some((e) => e.bloque_id === seccion.bloque_id)) {
+      return res.status(409).json({ error: 'Cruce de horario con otra sección ya matriculada' });
+    }
 
     await pool.query(
       'INSERT INTO matriculas (estudiante_id, seccion_id, periodo_id) VALUES (?, ?, ?)',
-      [idEstudiante, seccion_id, secRows[0].periodo_id]
+      [idEstudiante, seccion_id, seccion.periodo_id]
     );
     res.status(201).json({ ok: true });
   } catch (err) {

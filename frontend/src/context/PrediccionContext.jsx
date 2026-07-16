@@ -32,7 +32,6 @@ const INITIAL_STATE = {
   status:       'idle',   // 'idle' | 'loading' | 'success' | 'error'
   error:        null,
   lastSyncedAt: null,
-  ga2Result:    null,     // salida de Secciones, encadenada hacia Horarios
 };
 
 // ── Validación de campo con clamping ────────────────────────
@@ -71,10 +70,7 @@ function prediccionReducer(state, action) {
       return { ...INITIAL_STATE };
 
     case 'FETCH_START':
-      return { ...state, status: 'loading', error: null, ga2Result: null };
-
-    case 'SET_GA2_RESULT':
-      return { ...state, ga2Result: action.payload };
+      return { ...state, status: 'loading', error: null };
 
     case 'FETCH_SUCCESS': {
       const result = action.payload;
@@ -116,10 +112,6 @@ export function PrediccionProvider({ children }) {
     dispatch({ type: 'RESET_FORM' });
   }, []);
 
-  const setGa2Result = useCallback((payload) => {
-    dispatch({ type: 'SET_GA2_RESULT', payload });
-  }, []);
-
   const ejecutarPrediccion = useCallback(async () => {
     dispatch({ type: 'FETCH_START' });
     try {
@@ -133,7 +125,7 @@ export function PrediccionProvider({ children }) {
 
   // ── Valores derivados memoizados ────────────────────────
   const derived = useMemo(() => {
-    const { form, result, status, ga2Result } = state;
+    const { form, result, status } = state;
     const factorLab = form.laboratorio === 1 ? 0.85 : 1.0;
     const capacidadEfectiva = Math.max(1, Math.floor(form.capacidad_aula * factorLab));
 
@@ -144,8 +136,6 @@ export function PrediccionProvider({ children }) {
       hasValidResult:       status === 'success' && result !== null,
       ocupacionPromedio:    result?.ocupacion_promedio ?? null,
       aulasRecomendadas:    result?.aulas_recomendadas ?? null,
-      ga2Result,
-      hasGa2Result:         ga2Result !== null && Array.isArray(ga2Result?.secciones),
     };
   }, [state]);
 
@@ -154,10 +144,9 @@ export function PrediccionProvider({ children }) {
     dispatch,
     setField,
     resetForm,
-    setGa2Result,
     ejecutarPrediccion,
     derived,
-  }), [state, setField, resetForm, setGa2Result, ejecutarPrediccion, derived]);
+  }), [state, setField, resetForm, ejecutarPrediccion, derived]);
 
   return (
     <PrediccionContext.Provider value={value}>

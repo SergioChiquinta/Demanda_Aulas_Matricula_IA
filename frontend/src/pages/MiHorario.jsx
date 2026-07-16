@@ -14,7 +14,7 @@ export default function MiHorario() {
   const [conflictos, setConflictos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [vista, setVista] = useState('comparado'); // 'comparado' | 'mio'
+  const [vista, setVista] = useState('disponible'); // 'disponible' | 'mio'
   const [busqueda, setBusqueda] = useState('');
   const [accionEnCurso, setAccionEnCurso] = useState(null);
   const gridRef = useRef(null);
@@ -38,6 +38,8 @@ export default function MiHorario() {
   useEffect(() => { cargar(); }, [cargar]);
 
   const misSeccionIds = useMemo(() => new Set(misSecciones.map(s => s.id_seccion)), [misSecciones]);
+  const misCursoIds = useMemo(() => new Set(misSecciones.map(s => s.id_curso)), [misSecciones]);
+  const misBloqueIds = useMemo(() => new Set(misSecciones.map(s => s.id_bloque)), [misSecciones]);
   const conflictoBloqueIds = useMemo(() => new Set(conflictos), [conflictos]);
 
   const cursosDisponibles = useMemo(() => {
@@ -96,18 +98,20 @@ export default function MiHorario() {
 
       <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 20, flexWrap: 'wrap' }}>
         <div className="algo-selector" style={{ maxWidth: 320 }}>
-          <button className={`algo-btn${vista === 'comparado' ? ' selected' : ''}`} onClick={() => setVista('comparado')}>
-            <span className="algo-label">Comparado</span>
-            <span className="algo-desc">Horario admin. + mis bloques resaltados</span>
+          <button className={`algo-btn${vista === 'disponible' ? ' selected' : ''}`} onClick={() => setVista('disponible')}>
+            <span className="algo-label">Horario disponible</span>
+            <span className="algo-desc">Horario visualizado para ayuda</span>
           </button>
           <button className={`algo-btn${vista === 'mio' ? ' selected' : ''}`} onClick={() => setVista('mio')}>
             <span className="algo-label">Solo mi horario</span>
             <span className="algo-desc">{misSecciones.length} sección(es)</span>
           </button>
         </div>
-        <button className="btn btn-secondary" onClick={exportarPDF} disabled={seccionesGrilla.length === 0}>
-          📄 Exportar a PDF
-        </button>
+        {vista === 'mio' && (
+          <button className="btn btn-secondary" onClick={exportarPDF} disabled={seccionesGrilla.length === 0}>
+            📄 Exportar a PDF
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -157,6 +161,8 @@ export default function MiHorario() {
                 {cursosDisponibles.flatMap(([curso, secs]) => secs.map((s) => {
                   const yaElegida = misSeccionIds.has(s.id_seccion);
                   const miMatricula = misSecciones.find(m => m.id_seccion === s.id_seccion);
+                  const mismoCursoOtraSeccion = !yaElegida && misCursoIds.has(s.id_curso);
+                  const enCruce = !yaElegida && !mismoCursoOtraSeccion && misBloqueIds.has(s.id_bloque);
                   return (
                     <tr key={s.id_seccion}>
                       <td style={{ fontWeight: 600 }}>{curso}</td>
@@ -174,6 +180,14 @@ export default function MiHorario() {
                             onClick={() => desmatricular(miMatricula.id_matricula)}
                           >
                             Quitar
+                          </button>
+                        ) : mismoCursoOtraSeccion ? (
+                          <button className="btn btn-blocked" style={{ padding: '6px 12px', fontSize: 12 }} disabled title="Ya elegiste otra sección de este curso">
+                            Ya matriculado
+                          </button>
+                        ) : enCruce ? (
+                          <button className="btn btn-blocked" style={{ padding: '6px 12px', fontSize: 12 }} disabled title="Choca con otra sección ya elegida">
+                            En cruce
                           </button>
                         ) : (
                           <button
