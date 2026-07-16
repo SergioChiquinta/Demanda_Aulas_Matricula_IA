@@ -16,6 +16,8 @@ from ga_secciones import ga_optimizar_secciones
 from ga_horarios import ga_horarios, ga_horarios_secciones
 # ── Motor Inteligente de Planificación (nuevo módulo IA Clásica) ──
 from planner import PlanificadorInteligente
+# ── Orquestador del horario administrativo (catálogo real UTP Lima Sur) ──
+from orquestador_horario import generar_horario_administrativo, _cargar_catalogo
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -84,6 +86,19 @@ class SeccionItem(BaseModel):
 class HorariosRequest(BaseModel):
     secciones: list[SeccionItem] | None = None
     curso_nombre: str | None = None
+    # El dataset histórico standalone tiene 1200 nombres de curso distintos
+    # (sintéticos): sin recorte, el fitness O(n_cursos^2) por generación
+    # vuelve el GA impracticable. Se mantiene el default de 30 (comportamiento
+    # original) pero ahora es un parámetro explícito y ajustable por el
+    # caller — a diferencia de antes, que estaba fijo en el código. El
+    # requisito de "operar sobre todos los cursos reales" se resuelve con el
+    # catálogo real (78 cursos) vía /ml/horario-administrativo/generar, que
+    # no sufre esta explosión porque no ejecuta este GA de forma global.
+    top_n: int | None = 30
+
+
+class GenerarHorarioRequest(BaseModel):
+    periodo_id: int
 
 
 # ── Endpoints ────────────────────────────────────────────────
@@ -166,7 +181,24 @@ def ga3_horarios(req: HorariosRequest = HorariosRequest()):
         if req.secciones:
             secciones = [s.model_dump() for s in req.secciones]
             return ga_horarios_secciones(df, secciones, req.curso_nombre)
-        return ga_horarios(df)
+        return ga_horarios(df, top_n=req.top_n)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ══════════════════════════════════════════════════════════════════
+# HORARIO ADMINISTRATIVO — pipeline completo sobre el catálogo real
+# (78 cursos x 288 aulas x 70 bloques). Regresión -> AG#2 -> asignación
+# global. Persiste el resultado en la tabla `secciones`.
+# ══════════════════════════════════════════════════════════════════
+@app.post("/ml/horario-administrativo/generar")
+def horario_administrativo_generar(req: GenerarHorarioRequest):
+    """
+    Ejecuta el pipeline completo para un periodo y persiste el resultado.
+    Puede tardar decenas de segundos (recorre los ~78 cursos reales).
+    """
+    try:
+        return generar_horario_administrativo(req.periodo_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -198,31 +230,29 @@ _planificador = PlanificadorInteligente()
 
 def _resolver_aulas(req: PlannerRequest) -> list[dict]:
     """
-    Si el request no trae aulas, carga las reales desde el DataFrame
-    cacheado en MySQL para máximo realismo.
+    Si el request no trae aulas, usa las 288 aulas reales del campus
+    (4 pabellones x 8 pisos x 9 salones, aforo 40) desde la tabla
+    operativa `aulas`. Sin recorte: MAX_NODOS_ASTAR ya acota la
+    búsqueda independientemente de cuántas aulas se ofrezcan.
     """
     if req.aulas:
         return [a.model_dump() for a in req.aulas]
-    # Usar aulas reales del dataset
-    df = get_df()
-    aulas_df = (
-        df[["aula_id", "capacidad_aula", "pabellon"]]
-        .drop_duplicates("aula_id")
-        .head(20)  # limitar para evitar explosión combinatoria
-        .reset_index(drop=True)
-    )
+    catalogo = _cargar_catalogo()
     return [
-        {"id": str(row["aula_id"]), "capacidad": int(row["capacidad_aula"]), "pabellon": str(row["pabellon"])}
-        for _, row in aulas_df.iterrows()
+        {"id": row["codigo_aula"], "capacidad": int(row["aforo"]), "pabellon": row["codigo_aula"][0]}
+        for row in catalogo["aulas"]
     ]
 
 
 def _resolver_horarios(req: PlannerRequest) -> list[str]:
-    """Si el request no trae horarios, usa los turnos reales del dataset."""
+    """
+    Si el request no trae horarios, usa los 70 bloques reales
+    (día + franja) de la tabla operativa `bloques_horario`.
+    """
     if req.horarios:
         return req.horarios
-    df = get_df()
-    return sorted(df["horario_seccion"].dropna().unique().tolist())
+    catalogo = _cargar_catalogo()
+    return [f'{b["dia_semana"]} #{b["orden"]}' for b in catalogo["bloques"]]
 
 
 @app.post("/ml/planner/bfs")

@@ -98,7 +98,7 @@ export default function Analisis() {
       {loading && <Spinner text="Ejecutando K-Means K=3..." />}
 
       {result && !showInterp && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+        <div className="grid-2col" style={{ gap: 20 }}>
           {/* Scatter */}
           <div className="card">
             <div className="card-header">

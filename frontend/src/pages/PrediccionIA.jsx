@@ -53,7 +53,7 @@ export default function PrediccionIA() {
         <p>Evalúa demanda estimada, aulas necesarias, ocupación y disponibilidad docente.</p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: 24 }}>
+      <div className="split-layout split-layout--380">
         {/* Form */}
         <div className="card" style={{ height: 'fit-content' }}>
           <div className="card-header"><h3>Parámetros del escenario</h3></div>
@@ -96,7 +96,7 @@ export default function PrediccionIA() {
                 </select>
               </div>
 
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                 <button className="btn btn-primary" style={{ flex: 1 }} onClick={ejecutar} disabled={loading}>
                   {loading ? '⚙️ Procesando...' : 'EJECUTAR IA'}
                 </button>
